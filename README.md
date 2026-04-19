@@ -2,7 +2,7 @@
 
 Immutable strings for user-supplied identifiers that may or may not be quoted.
 
-`IdentStr` is for names that come from users: table names, column names, field names, aliases, and similar identifiers. It preserves the way an identifier was quoted while comparing names case-insensitively by default.
+`IdentStr` is for identifier strings that come from users: fields, labels, aliases, table names, and similar values. It preserves the way an identifier was quoted while comparing identifiers case-insensitively by default.
 
 ```rust
 use identstr::{IdentStr, Quote};
