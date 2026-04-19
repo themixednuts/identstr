@@ -111,19 +111,41 @@ impl TryFrom<char> for Quote {
 }
 
 impl QuoteTag for Quote {
+    #[inline]
     fn encode(self) -> u8 {
         self.tag()
     }
 
+    #[inline]
     fn decode(tag: u8) -> Option<Self> {
         Self::from_tag(tag)
     }
 
+    #[inline]
     fn from_open_byte(byte: u8) -> Option<Self> {
         Self::from_open_byte(byte)
     }
 
+    #[inline]
     fn close_byte(self) -> u8 {
         self.close_byte()
+    }
+
+    #[inline]
+    fn split_source(value: &str) -> Option<(Self, &str)> {
+        let bytes = value.as_bytes();
+        if bytes.len() < 2 {
+            return None;
+        }
+
+        let quote = match (bytes[0], bytes[bytes.len() - 1]) {
+            (b'"', b'"') => Self::Double,
+            (b'\'', b'\'') => Self::Single,
+            (b'`', b'`') => Self::Backtick,
+            (b'[', b']') => Self::Bracket,
+            _ => return None,
+        };
+
+        Some((quote, &value[1..value.len() - 1]))
     }
 }

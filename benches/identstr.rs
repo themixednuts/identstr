@@ -428,6 +428,74 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
     });
     group.finish();
 
+    let source_double = "\"customer_id\"";
+    let source_double_escaped = "\"customer\"\"id\"";
+    let source_bracket = "[customer_id]";
+    let source_bracket_escaped = "[customer]]id]";
+
+    let mut group = c.benchmark_group("construct_borrowed_source");
+    group.bench_function("new_double", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_double,
+            ));
+        });
+    });
+    group.bench_function("with_quote_double", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer_id",
+                Quote::Double,
+            ));
+        });
+    });
+    group.bench_function("new_double_escaped", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_double_escaped,
+            ));
+        });
+    });
+    group.bench_function("with_quote_double_escaped", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer\"id",
+                Quote::Double,
+            ));
+        });
+    });
+    group.bench_function("new_bracket", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_bracket,
+            ));
+        });
+    });
+    group.bench_function("with_quote_bracket", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer_id",
+                Quote::Bracket,
+            ));
+        });
+    });
+    group.bench_function("new_bracket_escaped", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_bracket_escaped,
+            ));
+        });
+    });
+    group.bench_function("with_quote_bracket_escaped", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer]id",
+                Quote::Bracket,
+            ));
+        });
+    });
+    group.finish();
+
     let mut group = c.benchmark_group("construct_borrowed_long");
     group.bench_function("identstr_box", |b| {
         b.iter(|| {

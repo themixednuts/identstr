@@ -161,23 +161,13 @@ fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
     output.push_str(quote_close_str(quote));
 }
 
-fn split_source<Q: QuoteTag>(value: &str) -> Option<(Q, &str)> {
+#[inline]
+fn unescape_source(value: &str, escape: u8) -> Cow<'_, str> {
     let bytes = value.as_bytes();
     if bytes.len() < 2 {
-        return None;
+        return Cow::Borrowed(value);
     }
 
-    let quote = Q::from_open_byte(bytes[0])?;
-    if bytes[bytes.len() - 1] != quote.close_byte() {
-        return None;
-    }
-
-    Some((quote, &value[1..value.len() - 1]))
-}
-
-fn unescape_source<Q: QuoteTag>(value: &str, quote: Q) -> Cow<'_, str> {
-    let escape = quote.close_byte();
-    let bytes = value.as_bytes();
     let mut index = 0;
 
     while index + 1 < bytes.len() {
@@ -236,6 +226,25 @@ pub trait QuoteTag: Copy + Eq + 'static {
     fn close_byte(self) -> u8 {
         let _ = self;
         0
+    }
+
+    /// Splits source text into quote metadata and inner identifier text.
+    ///
+    /// The default implementation checks only the first and last bytes.
+    #[must_use]
+    #[inline]
+    fn split_source(value: &str) -> Option<(Self, &str)> {
+        let bytes = value.as_bytes();
+        if bytes.len() < 2 {
+            return None;
+        }
+
+        let quote = Self::from_open_byte(bytes[0])?;
+        if bytes[bytes.len() - 1] != quote.close_byte() {
+            return None;
+        }
+
+        Some((quote, &value[1..value.len() - 1]))
     }
 }
 
@@ -434,11 +443,12 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_ref(value: &str) -> Self {
-        let Some((quote, value)) = split_source(value) else {
+        let Some((quote, value)) = Q::split_source(value) else {
             return Self::from_ref(value, None);
         };
 
-        match unescape_source(value, quote) {
+        let escape = quote.close_byte();
+        match unescape_source(value, escape) {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
@@ -446,11 +456,12 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_owned(value: S::Owned) -> Self {
-        let Some((quote, inner)) = split_source(value.as_ref()) else {
+        let Some((quote, inner)) = Q::split_source(value.as_ref()) else {
             return Self::from_owned(value, None);
         };
 
-        match unescape_source(inner, quote) {
+        let escape = quote.close_byte();
+        match unescape_source(inner, escape) {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
@@ -458,11 +469,12 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_string(value: String) -> Self {
-        let Some((quote, inner)) = split_source(&value) else {
+        let Some((quote, inner)) = Q::split_source(&value) else {
             return Self::from_string(value, None);
         };
 
-        match unescape_source(inner, quote) {
+        let escape = quote.close_byte();
+        match unescape_source(inner, escape) {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
