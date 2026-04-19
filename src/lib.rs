@@ -70,6 +70,29 @@ const INLINE_LEN_U8: [u8; INLINE_CAPACITY + 1] = [
     16,
 ];
 
+fn write_char(char: char, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut buffer = [0; 4];
+    f.write_str(char.encode_utf8(&mut buffer))
+}
+
+fn write_escaped(value: &str, quote: Quote, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let escape = quote.close();
+    let mut start = 0;
+
+    for (index, char) in value.char_indices() {
+        if char != escape {
+            continue;
+        }
+
+        f.write_str(&value[start..index])?;
+        write_char(escape, f)?;
+        write_char(escape, f)?;
+        start = index + char.len_utf8();
+    }
+
+    f.write_str(&value[start..])
+}
+
 /// Quote metadata stored alongside an identifier string.
 ///
 /// The default [`Quote`] type covers common SQL delimiters. Custom quote types
@@ -90,6 +113,11 @@ pub trait QuoteTag: Copy + Eq + 'static {
 pub struct IdentStr<Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Spill = BoxSpill> {
     repr: Repr,
     marker: PhantomData<(Q, P, S)>,
+}
+
+/// Display adapter that renders an identifier with preserved SQL-style quotes.
+pub struct Quoted<'a, P: Policy = policy::Ascii, S: Spill = BoxSpill> {
+    ident: &'a IdentStr<Quote, P, S>,
 }
 
 #[doc(hidden)]
@@ -322,6 +350,30 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
             marker: PhantomData,
         })
     }
+
+    /// Returns a display adapter that renders with preserved quote style.
+    #[must_use]
+    pub fn display_quoted(&self) -> Quoted<'_, P, S> {
+        Quoted { ident: self }
+    }
+
+    /// Renders this identifier with preserved quote style.
+    #[must_use]
+    pub fn to_quoted_string(&self) -> String {
+        self.display_quoted().to_string()
+    }
+}
+
+impl<P: Policy, S: Spill> fmt::Display for Quoted<'_, P, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(quote) = self.ident.quote() else {
+            return f.write_str(self.ident.as_str());
+        };
+
+        write_char(quote.open(), f)?;
+        write_escaped(self.ident.as_str(), quote, f)?;
+        write_char(quote.close(), f)
+    }
 }
 
 impl<Q: QuoteTag, P: Policy, S: Spill> Default for IdentStr<Q, P, S> {
@@ -346,9 +398,12 @@ impl<Q: QuoteTag, P: Policy, S: Spill> Clone for IdentStr<Q, P, S> {
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Spill> fmt::Debug for IdentStr<Q, P, S> {
+impl<Q: QuoteTag + fmt::Debug, P: Policy, S: Spill> fmt::Debug for IdentStr<Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
+        let mut debug = f.debug_struct("IdentStr");
+        debug.field("value", &self.as_str());
+        debug.field("quote", &self.quote());
+        debug.finish()
     }
 }
 
@@ -879,6 +934,37 @@ mod tests {
         let name = TestIdentStr::with_quote("Users", TestQuote::Double);
         assert_eq!(name.as_bytes(), b"Users");
         assert_eq!(AsRef::<[u8]>::as_ref(&name), b"Users");
+    }
+
+    #[test]
+    fn display_quoted_renders_preserved_quote_style() {
+        let unquoted = IdentStr::<Quote>::new("Users");
+        let double = IdentStr::<Quote>::with_quote("User\"Table", Quote::Double);
+        let single = IdentStr::<Quote>::with_quote("User'Table", Quote::Single);
+        let backtick = IdentStr::<Quote>::with_quote("User`Table", Quote::Backtick);
+        let bracket = IdentStr::<Quote>::with_quote("User]Table", Quote::Bracket);
+
+        assert_eq!(unquoted.to_quoted_string(), "Users");
+        assert_eq!(double.display_quoted().to_string(), "\"User\"\"Table\"");
+        assert_eq!(single.to_quoted_string(), "'User''Table'");
+        assert_eq!(backtick.to_quoted_string(), "`User``Table`");
+        assert_eq!(bracket.to_quoted_string(), "[User]]Table]");
+        assert_eq!(double.to_string(), "User\"Table");
+    }
+
+    #[test]
+    fn debug_includes_quote_metadata() {
+        let quoted = IdentStr::<Quote>::with_quote("Users", Quote::Double);
+        let unquoted = IdentStr::<Quote>::new("users");
+
+        assert_eq!(
+            format!("{quoted:?}"),
+            "IdentStr { value: \"Users\", quote: Some(Double) }"
+        );
+        assert_eq!(
+            format!("{unquoted:?}"),
+            "IdentStr { value: \"users\", quote: None }"
+        );
     }
 
     #[test]
