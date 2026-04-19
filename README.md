@@ -2,7 +2,7 @@
 
 Immutable strings for user-supplied identifiers that may or may not be quoted.
 
-`IdentStr` stores the unquoted text a user wrote, keeps optional quote metadata, and compares identifiers with a policy. The default policy is ASCII case-insensitive, matching common SQL identifier behavior.
+`IdentStr` is for names that come from users: table names, column names, field names, aliases, and similar identifiers. It preserves the way an identifier was quoted while comparing names case-insensitively by default.
 
 ```rust
 use identstr::{IdentStr, Quote};
@@ -31,7 +31,8 @@ assert_eq!(columns.get(&Key::new("users")), Some(&0));
 
 ## Features
 
-- `unicode`: enables Unicode comparison policies and security helpers.
+- ASCII case-insensitive matching is the default.
+- `unicode`: adds Unicode matching modes and Unicode security helpers.
 
 ## License
 
