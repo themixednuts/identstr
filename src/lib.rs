@@ -70,27 +70,95 @@ const INLINE_LEN_U8: [u8; INLINE_CAPACITY + 1] = [
     16,
 ];
 
-fn write_char(char: char, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut buffer = [0; 4];
-    f.write_str(char.encode_utf8(&mut buffer))
+const fn quote_open_str(quote: Quote) -> &'static str {
+    match quote {
+        Quote::Double => "\"",
+        Quote::Single => "'",
+        Quote::Backtick => "`",
+        Quote::Bracket => "[",
+    }
 }
 
-fn write_escaped(value: &str, quote: Quote, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let escape = quote.close();
+const fn quote_close_str(quote: Quote) -> &'static str {
+    match quote {
+        Quote::Bracket => "]",
+        Quote::Double => "\"",
+        Quote::Single => "'",
+        Quote::Backtick => "`",
+    }
+}
+
+const fn quote_escape_byte(quote: Quote) -> u8 {
+    match quote {
+        Quote::Double => b'"',
+        Quote::Single => b'\'',
+        Quote::Backtick => b'`',
+        Quote::Bracket => b']',
+    }
+}
+
+fn quoted_capacity(value: &str, quote: Option<Quote>) -> usize {
+    let Some(quote) = quote else {
+        return value.len();
+    };
+
+    let escape = quote_escape_byte(quote);
+    value.len() + 2 + value.bytes().filter(|byte| *byte == escape).count()
+}
+
+fn write_quoted_to(
+    value: &str,
+    quote: Option<Quote>,
+    output: &mut (impl fmt::Write + ?Sized),
+) -> fmt::Result {
+    let Some(quote) = quote else {
+        return output.write_str(value);
+    };
+
+    output.write_str(quote_open_str(quote))?;
+
+    let escape = quote_escape_byte(quote);
     let mut start = 0;
 
-    for (index, char) in value.char_indices() {
-        if char != escape {
+    for (index, byte) in value.bytes().enumerate() {
+        if byte != escape {
             continue;
         }
 
-        f.write_str(&value[start..index])?;
-        write_char(escape, f)?;
-        write_char(escape, f)?;
-        start = index + char.len_utf8();
+        output.write_str(&value[start..index])?;
+        output.write_str(quote_close_str(quote))?;
+        output.write_str(quote_close_str(quote))?;
+        start = index + 1;
     }
 
-    f.write_str(&value[start..])
+    output.write_str(&value[start..])?;
+    output.write_str(quote_close_str(quote))
+}
+
+fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
+    let Some(quote) = quote else {
+        output.push_str(value);
+        return;
+    };
+
+    output.push_str(quote_open_str(quote));
+
+    let escape = quote_escape_byte(quote);
+    let mut start = 0;
+
+    for (index, byte) in value.bytes().enumerate() {
+        if byte != escape {
+            continue;
+        }
+
+        output.push_str(&value[start..index]);
+        output.push_str(quote_close_str(quote));
+        output.push_str(quote_close_str(quote));
+        start = index + 1;
+    }
+
+    output.push_str(&value[start..]);
+    output.push_str(quote_close_str(quote));
 }
 
 /// Quote metadata stored alongside an identifier string.
@@ -357,22 +425,27 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
         Quoted { ident: self }
     }
 
+    /// Writes this identifier with preserved quote style.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error reported by the destination writer.
+    pub fn write_quoted(&self, output: &mut (impl fmt::Write + ?Sized)) -> fmt::Result {
+        write_quoted_to(self.as_str(), self.quote(), output)
+    }
+
     /// Renders this identifier with preserved quote style.
     #[must_use]
     pub fn to_quoted_string(&self) -> String {
-        self.display_quoted().to_string()
+        let mut rendered = String::with_capacity(quoted_capacity(self.as_str(), self.quote()));
+        push_quoted_to(self.as_str(), self.quote(), &mut rendered);
+        rendered
     }
 }
 
 impl<P: Policy, S: Spill> fmt::Display for Quoted<'_, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Some(quote) = self.ident.quote() else {
-            return f.write_str(self.ident.as_str());
-        };
-
-        write_char(quote.open(), f)?;
-        write_escaped(self.ident.as_str(), quote, f)?;
-        write_char(quote.close(), f)
+        self.ident.write_quoted(f)
     }
 }
 

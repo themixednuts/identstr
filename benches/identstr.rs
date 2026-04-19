@@ -3,6 +3,7 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    fmt::Write,
     hash::{DefaultHasher, Hash, Hasher},
     hint::black_box,
     rc::Rc,
@@ -242,6 +243,29 @@ fn consume_quoted_text(quote: Option<Quote>, value: &str) {
     black_box(value.as_ptr());
     black_box(value.len());
     black_box(quote.map(Quote::close));
+}
+
+fn write_quoted_naive(quote: Option<Quote>, value: &str, buffer: &mut String) {
+    let Some(quote) = quote else {
+        buffer.push_str(value);
+        return;
+    };
+
+    let escape = quote.close();
+    buffer.push(quote.open());
+    for char in value.chars() {
+        buffer.push(char);
+        if char == escape {
+            buffer.push(char);
+        }
+    }
+    buffer.push(quote.close());
+}
+
+fn naive_quoted_string(quote: Option<Quote>, value: &str) -> String {
+    let mut rendered = String::new();
+    write_quoted_naive(quote, value, &mut rendered);
+    rendered
 }
 
 fn eq_ident(
@@ -992,6 +1016,178 @@ fn bench_read(c: &mut Criterion) {
     bench_read_text(c);
     bench_read_quoted_parts(c);
     bench_read_key(c);
+}
+
+fn bench_render_quoted(c: &mut Criterion) {
+    let unquoted_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("Users");
+    let unquoted_naive = NaiveBoxIdent::new("Users", None);
+    let quoted_ident =
+        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("User\"Table", Quote::Double);
+    let quoted_naive = NaiveBoxIdent::new("User\"Table", Some(Quote::Double));
+    let bracket_ident =
+        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("User]Table", Quote::Bracket);
+    let bracket_naive = NaiveBoxIdent::new("User]Table", Some(Quote::Bracket));
+
+    let mut group = c.benchmark_group("render_quoted_write");
+    group.bench_function("identstr_unquoted", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            write!(
+                &mut buffer,
+                "{}",
+                black_box(&unquoted_ident).display_quoted()
+            )
+            .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_unquoted", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&unquoted_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("identstr_double_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            write!(&mut buffer, "{}", black_box(&quoted_ident).display_quoted())
+                .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_double_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&quoted_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("identstr_bracket_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            write!(
+                &mut buffer,
+                "{}",
+                black_box(&bracket_ident).display_quoted()
+            )
+            .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_bracket_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&bracket_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("render_quoted_write_direct");
+    group.bench_function("identstr_unquoted", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            black_box(&unquoted_ident)
+                .write_quoted(&mut buffer)
+                .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_unquoted", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&unquoted_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("identstr_double_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            black_box(&quoted_ident)
+                .write_quoted(&mut buffer)
+                .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_double_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&quoted_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("identstr_bracket_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            black_box(&bracket_ident)
+                .write_quoted(&mut buffer)
+                .expect("write to String");
+            black_box(&buffer);
+        });
+    });
+    group.bench_function("naive_bracket_escaped", |b| {
+        let mut buffer = String::new();
+        b.iter(|| {
+            buffer.clear();
+            let ident = black_box(&bracket_naive);
+            write_quoted_naive(ident.quote, ident.as_str(), &mut buffer);
+            black_box(&buffer);
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("render_quoted_string");
+    group.bench_function("identstr_unquoted", |b| {
+        b.iter(|| {
+            black_box(black_box(&unquoted_ident).to_quoted_string());
+        });
+    });
+    group.bench_function("naive_unquoted", |b| {
+        b.iter(|| {
+            let ident = black_box(&unquoted_naive);
+            black_box(naive_quoted_string(ident.quote, ident.as_str()));
+        });
+    });
+    group.bench_function("identstr_double_escaped", |b| {
+        b.iter(|| {
+            black_box(black_box(&quoted_ident).to_quoted_string());
+        });
+    });
+    group.bench_function("naive_double_escaped", |b| {
+        b.iter(|| {
+            let ident = black_box(&quoted_naive);
+            black_box(naive_quoted_string(ident.quote, ident.as_str()));
+        });
+    });
+    group.bench_function("identstr_bracket_escaped", |b| {
+        b.iter(|| {
+            black_box(black_box(&bracket_ident).to_quoted_string());
+        });
+    });
+    group.bench_function("naive_bracket_escaped", |b| {
+        b.iter(|| {
+            let ident = black_box(&bracket_naive);
+            black_box(naive_quoted_string(ident.quote, ident.as_str()));
+        });
+    });
+    group.finish();
 }
 
 fn bench_compare_short(c: &mut Criterion) {
@@ -2323,6 +2519,7 @@ criterion_group!(
     bench_maps,
     bench_repeat_key,
     bench_read,
+    bench_render_quoted,
     bench_compare,
     bench_mixed_backend_eq,
     bench_hash
