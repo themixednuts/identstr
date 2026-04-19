@@ -41,6 +41,18 @@ impl Quote {
         }
     }
 
+    /// Converts an opening quote delimiter byte into a [`Quote`] value.
+    #[must_use]
+    pub const fn from_open_byte(quote: u8) -> Option<Self> {
+        match quote {
+            b'"' => Some(Self::Double),
+            b'\'' => Some(Self::Single),
+            b'`' => Some(Self::Backtick),
+            b'[' => Some(Self::Bracket),
+            _ => None,
+        }
+    }
+
     /// Returns the opening delimiter for this quote style.
     #[must_use]
     pub const fn open(self) -> char {
@@ -52,12 +64,32 @@ impl Quote {
         }
     }
 
+    /// Returns the opening delimiter byte for this quote style.
+    #[must_use]
+    pub const fn open_byte(self) -> u8 {
+        match self {
+            Self::Double => b'"',
+            Self::Single => b'\'',
+            Self::Backtick => b'`',
+            Self::Bracket => b'[',
+        }
+    }
+
     /// Returns the closing delimiter for this quote style.
     #[must_use]
     pub const fn close(self) -> char {
         match self {
             Self::Bracket => ']',
             _ => self.open(),
+        }
+    }
+
+    /// Returns the closing delimiter byte for this quote style.
+    #[must_use]
+    pub const fn close_byte(self) -> u8 {
+        match self {
+            Self::Bracket => b']',
+            _ => self.open_byte(),
         }
     }
 }
@@ -85,5 +117,13 @@ impl QuoteTag for Quote {
 
     fn decode(tag: u8) -> Option<Self> {
         Self::from_tag(tag)
+    }
+
+    fn from_open_byte(byte: u8) -> Option<Self> {
+        Self::from_open_byte(byte)
+    }
+
+    fn close_byte(self) -> u8 {
+        self.close_byte()
     }
 }
