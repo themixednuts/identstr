@@ -1,6 +1,6 @@
 # identstr
 
-Immutable identifier strings with preserved quote style and configurable comparison policy.
+Immutable strings for user-supplied identifiers that may or may not be quoted.
 
 `IdentStr` stores the unquoted text a user wrote, keeps optional quote metadata, and compares identifiers with a policy. The default policy is ASCII case-insensitive, matching common SQL identifier behavior.
 
@@ -14,15 +14,19 @@ assert_eq!(name.quote(), Some(Quote::Double));
 assert_eq!(name, "users");
 ```
 
-For repeated lookups, use a cached key:
+Use `Key` when storing identifiers in maps or sets that are queried repeatedly:
 
 ```rust
+use std::collections::HashMap;
 use identstr::{IdentStr, Key};
 
 let name = IdentStr::new("Users");
 let key = Key::from(&name);
 
-assert_eq!(key.as_str(), "users");
+let mut columns = HashMap::new();
+columns.insert(key, 0);
+
+assert_eq!(columns.get(&Key::new("users")), Some(&0));
 ```
 
 ## Features
