@@ -27,7 +27,11 @@ unicode-security = { version = "0.1.2", optional = true }
 
 [dev-dependencies]
 compact_str = "0.9.0"
-criterion = { version = "0.8.2", default-features = false }
+criterion = { version = "0.8.2", default-features = false, features = [
+    "cargo_bench_support",
+    "html_reports",
+    "plotters",
+] }
 uncased = "0.9.10"
 
 [[bench]]

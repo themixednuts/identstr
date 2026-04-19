@@ -47,3 +47,49 @@ jobs:
         with:
           cache: true
       - run: cargo test ${{ matrix.features.args }}
+
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+      - name: Run short benchmark report
+        if: github.ref_type != 'tag'
+        run: >
+          cargo bench --bench identstr --
+          --sample-size 10
+          --warm-up-time 0.25
+          --measurement-time 0.5
+          --nresamples 1000
+          --plotting-backend plotters
+      - name: Run full benchmark report
+        if: github.ref_type == 'tag'
+        run: >
+          cargo bench --all-features --bench identstr --
+          --sample-size 100
+          --warm-up-time 3
+          --measurement-time 5
+          --nresamples 100000
+          --plotting-backend plotters
+      - name: Verify benchmark report
+        run: test -f target/criterion/report/index.html
+      - name: Upload benchmark report
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report-${{ github.sha }}
+          path: target/criterion
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload benchmark report
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report-${{ github.ref_name }}
+          path: target/criterion
+          if-no-files-found: error
+          retention-days: 90
