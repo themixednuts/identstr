@@ -183,7 +183,7 @@ pub struct IdentStr<Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Spill = B
     marker: PhantomData<(Q, P, S)>,
 }
 
-/// Display adapter that renders an identifier with preserved SQL-style quotes.
+/// Display adapter for rendering an identifier with its preserved quotes.
 pub struct Quoted<'a, P: Policy = policy::Ascii, S: Spill = BoxSpill> {
     ident: &'a IdentStr<Quote, P, S>,
 }
@@ -419,22 +419,25 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
         })
     }
 
-    /// Returns a display adapter that renders with preserved quote style.
+    /// Returns a formatter that renders this identifier with its preserved quotes.
+    ///
+    /// Use this with `format!`, `write!`, or logging APIs when an owned
+    /// [`String`] is not needed.
     #[must_use]
     pub fn display_quoted(&self) -> Quoted<'_, P, S> {
         Quoted { ident: self }
     }
 
-    /// Writes this identifier with preserved quote style.
+    /// Writes this identifier with its preserved quotes.
     ///
     /// # Errors
     ///
-    /// Returns any error reported by the destination writer.
+    /// Returns an error if the destination writer fails.
     pub fn write_quoted(&self, output: &mut (impl fmt::Write + ?Sized)) -> fmt::Result {
         write_quoted_to(self.as_str(), self.quote(), output)
     }
 
-    /// Renders this identifier with preserved quote style.
+    /// Returns this identifier rendered with its preserved quotes.
     #[must_use]
     pub fn to_quoted_string(&self) -> String {
         let mut rendered = String::with_capacity(quoted_capacity(self.as_str(), self.quote()));
