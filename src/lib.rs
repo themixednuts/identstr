@@ -1,12 +1,11 @@
-//! Immutable identifier strings with preserved quote style.
+//! Immutable identifier strings for user input that may or may not be quoted.
 //!
-//! [`IdentStr`] stores the unquoted identifier text and, when present, the
-//! delimiter used by the source text. Equality, ordering, and hashing follow a
-//! configurable policy, while display and string access return the stored text.
+//! [`IdentStr`] keeps the identifier text together with the quote style from
+//! the source, when one was present. Matching, ordering, and hashing are
+//! case-insensitive by default.
 //!
-//! [`Quote`] and [`policy::Ascii`] cover the common SQL-style case. Unicode
-//! policies and security helpers are available with the `unicode` cargo
-//! feature.
+//! [`Quote`] with [`policy::Ascii`] covers common SQL-style input. Enable the
+//! `unicode` feature for Unicode matching modes and security helpers.
 
 pub mod key;
 pub mod policy;
@@ -70,24 +69,6 @@ const INLINE_LEN_U8: [u8; INLINE_CAPACITY + 1] = [
     16,
 ];
 
-const fn quote_open_str(quote: Quote) -> &'static str {
-    match quote {
-        Quote::Double => "\"",
-        Quote::Single => "'",
-        Quote::Backtick => "`",
-        Quote::Bracket => "[",
-    }
-}
-
-const fn quote_close_str(quote: Quote) -> &'static str {
-    match quote {
-        Quote::Bracket => "]",
-        Quote::Double => "\"",
-        Quote::Single => "'",
-        Quote::Backtick => "`",
-    }
-}
-
 const fn quote_escape_byte(quote: Quote) -> u8 {
     match quote {
         Quote::Double => b'"',
@@ -97,13 +78,111 @@ const fn quote_escape_byte(quote: Quote) -> u8 {
     }
 }
 
-fn quoted_capacity(value: &str, quote: Option<Quote>) -> usize {
-    let Some(quote) = quote else {
-        return value.len();
-    };
+#[inline]
+fn find_byte(value: &str, needle: u8) -> Option<usize> {
+    let bytes = value.as_bytes();
+    let mut index = 0;
 
+    while index < bytes.len() {
+        if bytes[index] == needle {
+            return Some(index);
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+#[inline]
+fn find_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> Option<usize> {
+    while index < bytes.len() {
+        if bytes[index] == needle {
+            return Some(index);
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+#[inline]
+fn count_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> usize {
+    let mut count = 0;
+
+    while index < bytes.len() {
+        count += usize::from(bytes[index] == needle);
+        index += 1;
+    }
+
+    count
+}
+
+#[inline]
+fn push_simple_quoted(value: &str, quote: Quote, output: &mut String) {
+    output.push(quote.open());
+    output.push_str(value);
+    output.push(quote.close());
+}
+
+#[cold]
+fn push_escaped_quoted(value: &str, quote: Quote, first_escape: usize, output: &mut String) {
+    let close = quote.close();
     let escape = quote_escape_byte(quote);
-    value.len() + 2 + value.bytes().filter(|byte| *byte == escape).count()
+    let bytes = value.as_bytes();
+    let mut start = 0;
+    let mut index = first_escape;
+
+    output.push(quote.open());
+
+    loop {
+        output.push_str(&value[start..index]);
+        output.push(close);
+        output.push(close);
+        start = index + 1;
+
+        let Some(next_escape) = find_byte_from(bytes, escape, start) else {
+            break;
+        };
+
+        index = next_escape;
+    }
+
+    output.push_str(&value[start..]);
+    output.push(close);
+}
+
+#[cold]
+fn write_escaped_quoted_to(
+    value: &str,
+    quote: Quote,
+    first_escape: usize,
+    output: &mut (impl fmt::Write + ?Sized),
+) -> fmt::Result {
+    let close = quote.close();
+    let escape = quote_escape_byte(quote);
+    let bytes = value.as_bytes();
+    let mut start = 0;
+    let mut index = first_escape;
+
+    output.write_char(quote.open())?;
+
+    loop {
+        output.write_str(&value[start..index])?;
+        output.write_char(close)?;
+        output.write_char(close)?;
+        start = index + 1;
+
+        let Some(next_escape) = find_byte_from(bytes, escape, start) else {
+            break;
+        };
+
+        index = next_escape;
+    }
+
+    output.write_str(&value[start..])?;
+    output.write_char(close)
 }
 
 fn write_quoted_to(
@@ -115,24 +194,14 @@ fn write_quoted_to(
         return output.write_str(value);
     };
 
-    output.write_str(quote_open_str(quote))?;
-
     let escape = quote_escape_byte(quote);
-    let mut start = 0;
-
-    for (index, byte) in value.bytes().enumerate() {
-        if byte != escape {
-            continue;
-        }
-
-        output.write_str(&value[start..index])?;
-        output.write_str(quote_close_str(quote))?;
-        output.write_str(quote_close_str(quote))?;
-        start = index + 1;
+    if let Some(first_escape) = find_byte(value, escape) {
+        return write_escaped_quoted_to(value, quote, first_escape, output);
     }
 
-    output.write_str(&value[start..])?;
-    output.write_str(quote_close_str(quote))
+    output.write_char(quote.open())?;
+    output.write_str(value)?;
+    output.write_char(quote.close())
 }
 
 fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
@@ -141,24 +210,13 @@ fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
         return;
     };
 
-    output.push_str(quote_open_str(quote));
-
     let escape = quote_escape_byte(quote);
-    let mut start = 0;
-
-    for (index, byte) in value.bytes().enumerate() {
-        if byte != escape {
-            continue;
-        }
-
-        output.push_str(&value[start..index]);
-        output.push_str(quote_close_str(quote));
-        output.push_str(quote_close_str(quote));
-        start = index + 1;
+    if let Some(first_escape) = find_byte(value, escape) {
+        push_escaped_quoted(value, quote, first_escape, output);
+        return;
     }
 
-    output.push_str(&value[start..]);
-    output.push_str(quote_close_str(quote));
+    push_simple_quoted(value, quote, output);
 }
 
 #[inline]
@@ -205,28 +263,25 @@ fn unescape_source_slow(value: &str, escape: u8, first_escape: usize) -> String 
     unescaped
 }
 
-/// Quote metadata stored alongside an identifier string.
+/// Quote type used by [`IdentStr`].
 ///
-/// The default [`Quote`] type covers common SQL delimiters. Custom quote types
-/// can be used when a format needs different delimiters. Implementations define
-/// how [`IdentStr::new`] recognizes quoted source text.
+/// [`Quote`] covers common SQL delimiters. Implement this trait when your input
+/// format uses different delimiter pairs.
 pub trait QuoteTag: Copy + Eq + 'static {
-    /// Encodes this quote marker as a stored tag.
+    /// Returns a stable tag for this quote style.
     fn encode(self) -> u8;
 
-    /// Decodes a previously stored quote tag.
+    /// Restores a quote style from [`encode`](Self::encode).
     fn decode(tag: u8) -> Option<Self>;
 
-    /// Returns the closing delimiter byte for this quote marker.
-    ///
-    /// This byte is used when unescaping doubled delimiters inside quoted
-    /// source text.
+    /// Returns the closing delimiter byte.
     #[must_use]
     fn close_byte(self) -> u8;
 
-    /// Splits source text into quote metadata and inner identifier text.
+    /// Parses quoted source text and returns the quote marker with the inner
+    /// identifier text.
     ///
-    /// Return `None` when `value` should be treated as unquoted source text.
+    /// Return `None` when `value` should be treated as unquoted text.
     #[must_use]
     fn split_source(value: &str) -> Option<(Self, &str)>;
 }
@@ -557,7 +612,7 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
         })
     }
 
-    /// Returns a formatter that renders this identifier with its preserved quotes.
+    /// Returns a formatter that renders this identifier with its quotes.
     ///
     /// Use this with `format!`, `write!`, or logging APIs when an owned
     /// [`String`] is not needed.
@@ -566,7 +621,7 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
         Quoted { ident: self }
     }
 
-    /// Writes this identifier with its preserved quotes.
+    /// Writes this identifier with its quotes.
     ///
     /// # Errors
     ///
@@ -575,11 +630,25 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
         write_quoted_to(self.as_str(), self.quote(), output)
     }
 
-    /// Returns this identifier rendered with its preserved quotes.
+    /// Returns this identifier rendered with its quotes.
     #[must_use]
     pub fn to_quoted_string(&self) -> String {
-        let mut rendered = String::with_capacity(quoted_capacity(self.as_str(), self.quote()));
-        push_quoted_to(self.as_str(), self.quote(), &mut rendered);
+        let value = self.as_str();
+        let Some(quote) = self.quote() else {
+            return value.to_owned();
+        };
+
+        let escape = quote_escape_byte(quote);
+        let bytes = value.as_bytes();
+        let capacity = match find_byte(value, escape) {
+            Some(first_escape) => {
+                value.len() + 3 + count_byte_from(bytes, escape, first_escape + 1)
+            }
+            None => value.len() + 2,
+        };
+
+        let mut rendered = String::with_capacity(capacity);
+        push_quoted_to(value, Some(quote), &mut rendered);
         rendered
     }
 }

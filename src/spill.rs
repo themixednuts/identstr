@@ -6,12 +6,12 @@ pub mod sealed {
     pub trait Sealed {}
 }
 
-/// Out-of-line storage used when an identifier does not fit inline.
+/// Storage backend used when an identifier is too large to stay inline.
 ///
-/// This selects the owned string type used after a value spills past inline
-/// capacity.
+/// Choose [`BoxSpill`], [`ArcSpill`], or [`RcSpill`] based on how you want
+/// larger values to be owned and cloned.
 pub trait Spill: sealed::Sealed + Copy + 'static {
-    /// Owned string type used by this storage backend.
+    /// Owned string type used by this backend.
     type Owned: AsRef<str> + 'static;
 
     #[doc(hidden)]
