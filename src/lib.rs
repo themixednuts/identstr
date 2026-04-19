@@ -172,25 +172,7 @@ fn unescape_source(value: &str, escape: u8) -> Cow<'_, str> {
 
     while index + 1 < bytes.len() {
         if bytes[index] == escape && bytes[index + 1] == escape {
-            let mut unescaped = String::with_capacity(value.len() - 1);
-            unescaped.push_str(&value[..index]);
-            unescaped.push(escape as char);
-            index += 2;
-
-            let mut start = index;
-            while index + 1 < bytes.len() {
-                if bytes[index] == escape && bytes[index + 1] == escape {
-                    unescaped.push_str(&value[start..index]);
-                    unescaped.push(escape as char);
-                    index += 2;
-                    start = index;
-                } else {
-                    index += 1;
-                }
-            }
-
-            unescaped.push_str(&value[start..]);
-            return Cow::Owned(unescaped);
+            return Cow::Owned(unescape_source_slow(value, escape, index));
         }
 
         index += 1;
@@ -199,10 +181,35 @@ fn unescape_source(value: &str, escape: u8) -> Cow<'_, str> {
     Cow::Borrowed(value)
 }
 
+#[cold]
+fn unescape_source_slow(value: &str, escape: u8, first_escape: usize) -> String {
+    let bytes = value.as_bytes();
+    let mut unescaped = String::with_capacity(value.len() - 1);
+    unescaped.push_str(&value[..first_escape]);
+    unescaped.push(escape as char);
+
+    let mut index = first_escape + 2;
+    let mut start = index;
+    while index + 1 < bytes.len() {
+        if bytes[index] == escape && bytes[index + 1] == escape {
+            unescaped.push_str(&value[start..index]);
+            unescaped.push(escape as char);
+            index += 2;
+            start = index;
+        } else {
+            index += 1;
+        }
+    }
+
+    unescaped.push_str(&value[start..]);
+    unescaped
+}
+
 /// Quote metadata stored alongside an identifier string.
 ///
 /// The default [`Quote`] type covers common SQL delimiters. Custom quote types
-/// can be used when a format needs different delimiters.
+/// can be used when a format needs different delimiters. Implementations define
+/// how [`IdentStr::new`] recognizes quoted source text.
 pub trait QuoteTag: Copy + Eq + 'static {
     /// Encodes this quote marker as a stored tag.
     fn encode(self) -> u8;
@@ -210,42 +217,18 @@ pub trait QuoteTag: Copy + Eq + 'static {
     /// Decodes a previously stored quote tag.
     fn decode(tag: u8) -> Option<Self>;
 
-    /// Converts an opening quote delimiter byte into a quote marker.
-    ///
-    /// The default implementation treats every source string as unquoted.
-    #[must_use]
-    fn from_open_byte(byte: u8) -> Option<Self> {
-        let _ = byte;
-        None
-    }
-
     /// Returns the closing delimiter byte for this quote marker.
     ///
-    /// This is used only for markers returned by [`from_open_byte`](Self::from_open_byte).
+    /// This byte is used when unescaping doubled delimiters inside quoted
+    /// source text.
     #[must_use]
-    fn close_byte(self) -> u8 {
-        let _ = self;
-        0
-    }
+    fn close_byte(self) -> u8;
 
     /// Splits source text into quote metadata and inner identifier text.
     ///
-    /// The default implementation checks only the first and last bytes.
+    /// Return `None` when `value` should be treated as unquoted source text.
     #[must_use]
-    #[inline]
-    fn split_source(value: &str) -> Option<(Self, &str)> {
-        let bytes = value.as_bytes();
-        if bytes.len() < 2 {
-            return None;
-        }
-
-        let quote = Self::from_open_byte(bytes[0])?;
-        if bytes[bytes.len() - 1] != quote.close_byte() {
-            return None;
-        }
-
-        Some((quote, &value[1..value.len() - 1]))
-    }
+    fn split_source(value: &str) -> Option<(Self, &str)>;
 }
 
 /// Immutable identifier text with optional quote metadata.
@@ -1035,16 +1018,6 @@ mod tests {
             }
         }
 
-        fn from_open_byte(byte: u8) -> Option<Self> {
-            match byte {
-                b'"' => Some(Self::Double),
-                b'\'' => Some(Self::Single),
-                b'`' => Some(Self::Backtick),
-                b'[' => Some(Self::Bracket),
-                _ => None,
-            }
-        }
-
         fn close_byte(self) -> u8 {
             match self {
                 Self::Bracket => b']',
@@ -1052,6 +1025,23 @@ mod tests {
                 Self::Single => b'\'',
                 Self::Backtick => b'`',
             }
+        }
+
+        fn split_source(value: &str) -> Option<(Self, &str)> {
+            let bytes = value.as_bytes();
+            if bytes.len() < 2 {
+                return None;
+            }
+
+            let quote = match (bytes[0], bytes[bytes.len() - 1]) {
+                (b'"', b'"') => Self::Double,
+                (b'\'', b'\'') => Self::Single,
+                (b'`', b'`') => Self::Backtick,
+                (b'[', b']') => Self::Bracket,
+                _ => return None,
+            };
+
+            Some((quote, &value[1..value.len() - 1]))
         }
     }
 
@@ -1071,6 +1061,14 @@ mod tests {
                 0x10 => Some(Self::Custom),
                 _ => None,
             }
+        }
+
+        fn close_byte(self) -> u8 {
+            b'\0'
+        }
+
+        fn split_source(_value: &str) -> Option<(Self, &str)> {
+            None
         }
     }
 

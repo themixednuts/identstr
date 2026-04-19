@@ -122,11 +122,6 @@ impl QuoteTag for Quote {
     }
 
     #[inline]
-    fn from_open_byte(byte: u8) -> Option<Self> {
-        Self::from_open_byte(byte)
-    }
-
-    #[inline]
     fn close_byte(self) -> u8 {
         self.close_byte()
     }
