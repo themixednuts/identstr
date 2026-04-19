@@ -2,6 +2,13 @@
 name = "identstr"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
+description = "Immutable identifier strings with preserved quote style and configurable comparison policy."
+license = "MIT"
+repository = "https://github.com/themixednuts/identstr"
+readme = "README.md"
+keywords = ["identifier", "case-insensitive", "sql", "unicode"]
+categories = ["data-structures", "parser-implementations", "text-processing"]
 
 [features]
 default = []
