@@ -734,7 +734,7 @@ impl<Q: QuoteTag, P: Policy, L: Spill, R: Spill> PartialEq<IdentStr<Q, P, R>>
 {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, R>) -> bool {
-        P::eq(self.as_str(), other.as_str())
+        P::eq_bytes(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -750,7 +750,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> PartialOrd for IdentStr<Q, P, S> {
 impl<Q: QuoteTag, P: Policy, S: Spill> Ord for IdentStr<Q, P, S> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        P::cmp(self.as_str(), other.as_str())
+        P::cmp_bytes(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -820,7 +820,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> PartialEq<Rc<str>> for IdentStr<Q, P, S> 
 impl<Q: QuoteTag, P: KeyPolicy, S: Spill> PartialEq<Key<P>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self.as_str(), other.as_str())
+        P::eq_bytes(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -1456,14 +1456,14 @@ mod tests {
     fn key_compares_with_ident_and_string_types() {
         let ident = TestIdentStr::with_quote("Users", TestQuote::Double);
         let key = Key::<policy::Ascii>::new("Users");
-        let owned = String::from("users");
-        let cow = std::borrow::Cow::Borrowed("users");
-        let boxed = Box::<str>::from("users");
-        let shared = Arc::<str>::from("users");
-        let local = Rc::<str>::from("users");
+        let owned = String::from("uSeRs");
+        let cow = std::borrow::Cow::Borrowed("uSeRs");
+        let boxed = Box::<str>::from("uSeRs");
+        let shared = Arc::<str>::from("uSeRs");
+        let local = Rc::<str>::from("uSeRs");
 
-        assert_eq!(key, "users");
-        assert_eq!("users", key);
+        assert_eq!(key, "uSeRs");
+        assert_eq!("uSeRs", key);
         assert_eq!(key, owned);
         assert_eq!(owned, key);
         assert_eq!(key, cow);
