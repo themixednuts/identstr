@@ -2128,6 +2128,18 @@ fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| (Key::new(name), index))
         .collect();
+    let key_short_entry_map: HashMap<
+        Key<policy::Ascii>,
+        (IdentStr<Quote, policy::Ascii, BoxSpill>, usize),
+    > = MAP_NAMES_SHORT
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let ident = IdentStr::new(*name);
+            let key = ident.to_key();
+            (key, (ident, index))
+        })
+        .collect();
     let naive_box_short_map: HashMap<Box<str>, usize> = MAP_NAMES_SHORT
         .iter()
         .enumerate()
@@ -2270,6 +2282,117 @@ fn bench_maps(c: &mut Criterion) {
     });
     group.finish();
 
+    let mut group = c.benchmark_group("map_lookup_short_combined");
+    group.bench_function("identstr_box_direct", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                sum += identstr_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_box_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let (stored_ident, value) = identstr_short_map
+                    .get_key_value(black_box(query))
+                    .expect("short ident present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let key = black_box(query).to_key();
+                sum += key_short_map
+                    .get(black_box(&key))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident_entry", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let key = black_box(query).to_key();
+                let (stored_ident, value) = key_short_entry_map
+                    .get(black_box(&key))
+                    .expect("short entry present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident_to_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let key = black_box(query).to_key();
+                sum += key_short_map
+                    .get(black_box(&key))
+                    .copied()
+                    .unwrap_or_default();
+                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                    key.as_str(),
+                ));
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_short_queries {
+                sum += key_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached_entry", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_short_queries {
+                let (stored_ident, value) = key_short_entry_map
+                    .get(black_box(query))
+                    .expect("short entry present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached_to_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_short_queries {
+                sum += key_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                    query.as_str(),
+                ));
+            }
+            black_box(sum);
+        });
+    });
+    group.finish();
+
     let identstr_long_map: HashMap<IdentStr<Quote, policy::Ascii, BoxSpill>, usize> =
         MAP_NAMES_LONG
             .iter()
@@ -2291,6 +2414,18 @@ fn bench_maps(c: &mut Criterion) {
         .iter()
         .enumerate()
         .map(|(index, name)| (Key::new(name), index))
+        .collect();
+    let key_long_entry_map: HashMap<
+        Key<policy::Ascii>,
+        (IdentStr<Quote, policy::Ascii, BoxSpill>, usize),
+    > = MAP_NAMES_LONG
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let ident = IdentStr::new(*name);
+            let key = ident.to_key();
+            (key, (ident, index))
+        })
         .collect();
     let naive_box_long_map: HashMap<Box<str>, usize> = MAP_NAMES_LONG
         .iter()
@@ -2444,6 +2579,117 @@ fn bench_maps(c: &mut Criterion) {
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("map_lookup_long_combined");
+    group.bench_function("identstr_box_direct", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                sum += identstr_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_box_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let (stored_ident, value) = identstr_long_map
+                    .get_key_value(black_box(query))
+                    .expect("long ident present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let key = black_box(query).to_key();
+                sum += key_long_map
+                    .get(black_box(&key))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident_entry", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let key = black_box(query).to_key();
+                let (stored_ident, value) = key_long_entry_map
+                    .get(black_box(&key))
+                    .expect("long entry present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_from_ident_to_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let key = black_box(query).to_key();
+                sum += key_long_map
+                    .get(black_box(&key))
+                    .copied()
+                    .unwrap_or_default();
+                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                    key.as_str(),
+                ));
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_long_queries {
+                sum += key_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached_entry", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_long_queries {
+                let (stored_ident, value) = key_long_entry_map
+                    .get(black_box(query))
+                    .expect("long entry present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("key_box_cached_to_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &key_long_queries {
+                sum += key_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                    query.as_str(),
+                ));
             }
             black_box(sum);
         });

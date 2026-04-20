@@ -24,18 +24,42 @@ let name = IdentStr::with_quote("Users", '"');
 assert_eq!(name.quote(), Some(Quote::Double));
 ```
 
-Use `Key` for repeated map and set lookups:
+Use `IdentStr` directly for the normal map API:
 
 ```rust
 use std::collections::HashMap;
-use identstr::{IdentStr, Key};
-
-let table = IdentStr::new("\"Users\"");
+use identstr::{IdentStr, Quote};
 
 let mut tables = HashMap::new();
-tables.insert(table.to_key(), 0);
+tables.insert(IdentStr::<Quote>::new("\"Users\""), 0);
 
-assert_eq!(tables.get(&Key::new("users")), Some(&0));
+assert_eq!(tables.get(&IdentStr::new("users")), Some(&0));
+
+let (stored_name, index) = tables
+    .get_key_value(&IdentStr::new("users"))
+    .expect("table present");
+
+assert_eq!(stored_name.quote(), Some(Quote::Double));
+assert_eq!(*index, 0);
+```
+
+If the same identifier is looked up repeatedly, cache a `Key` and keep the
+original identifier in the value:
+
+```rust
+use std::collections::HashMap;
+use identstr::{IdentStr, Key, Quote};
+
+let table = IdentStr::<Quote>::new("\"Users\"");
+
+let mut tables = HashMap::new();
+tables.insert(table.to_key(), (table, 0));
+
+let lookup = Key::new("users");
+let (stored_name, index) = tables.get(&lookup).expect("table present");
+
+assert_eq!(stored_name.quote(), Some(Quote::Double));
+assert_eq!(*index, 0);
 ```
 
 ## Features
