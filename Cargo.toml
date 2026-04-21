@@ -37,3 +37,4 @@ uncased = "0.9.10"
 [[bench]]
 name = "identstr"
 harness = false
+path = "benches/identstr/main.rs"
