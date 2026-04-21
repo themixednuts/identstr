@@ -24,6 +24,9 @@ let name = IdentStr::with_quote("Users", '"');
 assert_eq!(name.quote(), Some(Quote::Double));
 ```
 
+Use `from_raw` when the input is already identifier text and should not be
+parsed for surrounding quote delimiters.
+
 Use `IdentStr` directly for the normal map API:
 
 ```rust
@@ -43,23 +46,20 @@ assert_eq!(stored_name.quote(), Some(Quote::Double));
 assert_eq!(*index, 0);
 ```
 
-If the same identifier is looked up repeatedly, cache a `Key` and keep the
-original identifier in the value:
+Most users can stop there.
+
+`Key` is an optional lookup key for code that already keeps a separate map or
+set of canonicalized identifiers:
 
 ```rust
 use std::collections::HashMap;
 use identstr::{IdentStr, Key, Quote};
 
-let table = IdentStr::<Quote>::new("\"Users\"");
-
 let mut tables = HashMap::new();
-tables.insert(table.to_key(), (table, 0));
+tables.insert(Key::new("\"Users\""), 0);
 
-let lookup = Key::new("users");
-let (stored_name, index) = tables.get(&lookup).expect("table present");
-
-assert_eq!(stored_name.quote(), Some(Quote::Double));
-assert_eq!(*index, 0);
+let lookup = Key::new("\"users\"");
+assert_eq!(tables.get(&lookup), Some(&0));
 ```
 
 ## Features

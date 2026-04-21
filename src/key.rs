@@ -1,7 +1,6 @@
 //! Cached keys for identifier policies.
 
 use std::{
-    borrow::Borrow,
     borrow::Cow,
     cmp::Ordering,
     convert::Infallible,
@@ -9,30 +8,56 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     ops::Deref,
-    rc::Rc,
     str::FromStr,
-    sync::Arc,
 };
 
-use crate::policy::{self, KeyPolicy};
+use crate::{
+    Quote, QuoteTag,
+    policy::{self, KeyPolicy},
+};
 
 /// Owned key text for a [`crate::policy::KeyPolicy`].
 ///
-/// Use this when the same identifier participates in repeated comparisons,
-/// hashing, or map lookups under one policy.
+/// Most code can use [`crate::IdentStr`] directly.
+///
+/// Use `Key` when you already keep a separate map or set of canonicalized
+/// identifiers and want to query that collection with the same key type.
 pub struct Key<P: KeyPolicy = policy::Ascii> {
     value: Box<str>,
     marker: PhantomData<P>,
 }
 
 impl<P: KeyPolicy> Key<P> {
-    /// Builds a key for the provided text.
+    /// Builds a key from identifier source text.
+    ///
+    /// When the input is surrounded by a recognized quote pair, the
+    /// surrounding quotes are removed and doubled closing delimiters are
+    /// unescaped before the key text is cached. Otherwise, including malformed
+    /// quoted text, the input is cached as raw identifier text.
     #[must_use]
     pub fn new(value: &str) -> Self {
+        Self::new_with_quotes::<Quote>(value)
+    }
+
+    /// Builds a key from source text that uses the quote syntax from `Q`.
+    ///
+    /// Use this when the source text may be quoted with delimiters other than
+    /// the built-in [`Quote`] syntax.
+    #[must_use]
+    pub fn new_with_quotes<Q: QuoteTag>(value: &str) -> Self {
+        Self::from_source_ref::<Q>(value)
+    }
+
+    /// Builds a key from already-unquoted identifier text.
+    ///
+    /// Use this when the input is already identifier text and should not be
+    /// parsed for surrounding quote delimiters.
+    #[must_use]
+    pub fn from_raw(value: &str) -> Self {
         Self::from_box(P::key(value))
     }
 
-    /// Returns the stored key text.
+    /// Returns the cached key text.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.value
@@ -42,6 +67,22 @@ impl<P: KeyPolicy> Key<P> {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.value.as_bytes()
+    }
+
+    fn from_source_ref<Q: QuoteTag>(value: &str) -> Self {
+        match crate::parse_quoted_source::<Q>(value) {
+            Some((_, Cow::Borrowed(value))) => Self::from_box(P::key(value)),
+            Some((_, Cow::Owned(value))) => Self::from_box(P::into_key(value.into_boxed_str())),
+            None => Self::from_raw(value),
+        }
+    }
+
+    fn from_source_box<Q: QuoteTag>(value: Box<str>) -> Self {
+        match crate::parse_quoted_source::<Q>(&value) {
+            Some((_, Cow::Borrowed(value))) => Self::from_box(P::key(value)),
+            Some((_, Cow::Owned(value))) => Self::from_box(P::into_key(value.into_boxed_str())),
+            None => Self::from_box(P::into_key(value)),
+        }
     }
 
     fn from_box(value: Box<str>) -> Self {
@@ -93,12 +134,6 @@ impl<P: KeyPolicy> AsRef<[u8]> for Key<P> {
     }
 }
 
-impl<P: KeyPolicy> Borrow<str> for Key<P> {
-    fn borrow(&self) -> &str {
-        self.as_str()
-    }
-}
-
 impl<P: KeyPolicy> Default for Key<P> {
     fn default() -> Self {
         Self::new("")
@@ -111,107 +146,11 @@ impl<P: KeyPolicy> PartialEq for Key<P> {
     }
 }
 
-impl<P: KeyPolicy> PartialEq<str> for Key<P> {
-    fn eq(&self, other: &str) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<&str> for Key<P> {
-    fn eq(&self, other: &&str) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<String> for Key<P> {
-    fn eq(&self, other: &String) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<&String> for Key<P> {
-    fn eq(&self, other: &&String) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<'a, P: KeyPolicy> PartialEq<Cow<'a, str>> for Key<P> {
-    fn eq(&self, other: &Cow<'a, str>) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Box<str>> for Key<P> {
-    fn eq(&self, other: &Box<str>) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Arc<str>> for Key<P> {
-    fn eq(&self, other: &Arc<str>) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Rc<str>> for Key<P> {
-    fn eq(&self, other: &Rc<str>) -> bool {
-        P::eq(self.as_str(), other)
-    }
-}
-
 impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Spill> PartialEq<crate::IdentStr<Q, P, S>>
     for Key<P>
 {
     fn eq(&self, other: &crate::IdentStr<Q, P, S>) -> bool {
-        P::eq_bytes(other.as_bytes(), self.as_bytes())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for str {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for &str {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for String {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for &String {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for Cow<'_, str> {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for Box<str> {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for Arc<str> {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
-    }
-}
-
-impl<P: KeyPolicy> PartialEq<Key<P>> for Rc<str> {
-    fn eq(&self, other: &Key<P>) -> bool {
-        P::eq(self, other.as_str())
+        P::eq(other.as_str(), self.as_str())
     }
 }
 
@@ -243,7 +182,7 @@ impl<P: KeyPolicy> From<&str> for Key<P> {
 
 impl<P: KeyPolicy> From<String> for Key<P> {
     fn from(value: String) -> Self {
-        Self::from_box(P::into_key(value.into_boxed_str()))
+        Self::from_source_box::<Quote>(value.into_boxed_str())
     }
 }
 
@@ -258,13 +197,13 @@ impl<'a, P: KeyPolicy> From<std::borrow::Cow<'a, str>> for Key<P> {
 
 impl<P: KeyPolicy> From<Box<str>> for Key<P> {
     fn from(value: Box<str>) -> Self {
-        Self::from_box(P::into_key(value))
+        Self::from_source_box::<Quote>(value)
     }
 }
 
 impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Spill> From<&crate::IdentStr<Q, P, S>> for Key<P> {
     fn from(value: &crate::IdentStr<Q, P, S>) -> Self {
-        Self::new(value.as_str())
+        Self::from_raw(value.as_str())
     }
 }
 

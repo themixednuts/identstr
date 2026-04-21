@@ -15,6 +15,13 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use identstr::{ArcSpill, BoxSpill, IdentStr, Key, Quote, RcSpill, policy};
 use uncased::Uncased;
 
+type AsciiIdent = IdentStr<Quote, policy::Ascii, BoxSpill>;
+type AsciiArcIdent = IdentStr<Quote, policy::Ascii, ArcSpill>;
+type AsciiKey = Key<policy::Ascii>;
+type AsciiEntry = (AsciiIdent, usize);
+type StringKey = String;
+type StaticKey = &'static str;
+
 #[derive(Clone)]
 struct NaiveBoxIdent {
     value: Box<str>,
@@ -222,6 +229,17 @@ const MAP_NAMES_SHORT: &[&str] = &[
     "TeamName",
 ];
 
+const MAP_NAMES_SHORT_LOWER: &[&str] = &[
+    "users",
+    "orders",
+    "customer_id",
+    "line_items",
+    "sessions",
+    "role_map",
+    "audit_log",
+    "teamname",
+];
+
 const MAP_NAMES_LONG: &[&str] = &[
     "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE_ALPHA",
     "this_identifier_name_is_long_enough_to_spill_out_of_line_beta",
@@ -231,6 +249,17 @@ const MAP_NAMES_LONG: &[&str] = &[
     "role_mapping_identifier_name_that_spills_out_of_line_zeta",
     "audit_log_identifier_name_that_spills_out_of_line_eta",
     "TeamIdentifierNameThatSpillsOutOfLineTheta",
+];
+
+const MAP_NAMES_LONG_LOWER: &[&str] = &[
+    "this_identifier_name_is_long_enough_to_spill_out_of_line_alpha",
+    "this_identifier_name_is_long_enough_to_spill_out_of_line_beta",
+    "customeridentifiernamethatspillsoutoflinegamma",
+    "line_item_identifier_name_that_spills_out_of_line_delta",
+    "session_identifier_name_that_spills_out_of_line_epsilon",
+    "role_mapping_identifier_name_that_spills_out_of_line_zeta",
+    "audit_log_identifier_name_that_spills_out_of_line_eta",
+    "teamidentifiernamethatspillsoutoflinetheta",
 ];
 
 fn consume_text(value: &str) {
@@ -492,6 +521,39 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
                 "customer]id",
                 Quote::Bracket,
             ));
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("construct_key_source");
+    group.bench_function("new_raw", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::new("customer_id"));
+        });
+    });
+    group.bench_function("from_raw", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::from_raw("customer_id"));
+        });
+    });
+    group.bench_function("new_double", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::new(source_double));
+        });
+    });
+    group.bench_function("new_double_escaped", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::new(source_double_escaped));
+        });
+    });
+    group.bench_function("new_bracket", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::new(source_bracket));
+        });
+    });
+    group.bench_function("new_bracket_escaped", |b| {
+        b.iter(|| {
+            black_box(Key::<policy::Ascii>::new(source_bracket_escaped));
         });
     });
     group.finish();
@@ -2117,21 +2179,17 @@ fn bench_maps(c: &mut Criterion) {
     });
     group.finish();
 
-    let identstr_short_map: HashMap<IdentStr<Quote, policy::Ascii, BoxSpill>, usize> =
-        MAP_NAMES_SHORT
-            .iter()
-            .enumerate()
-            .map(|(index, name)| (IdentStr::new(*name), index))
-            .collect();
-    let key_short_map: HashMap<Key<policy::Ascii>, usize> = MAP_NAMES_SHORT
+    let identstr_short_map: HashMap<AsciiIdent, usize> = MAP_NAMES_SHORT
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (IdentStr::new(*name), index))
+        .collect();
+    let key_short_map: HashMap<AsciiKey, usize> = MAP_NAMES_SHORT
         .iter()
         .enumerate()
         .map(|(index, name)| (Key::new(name), index))
         .collect();
-    let key_short_entry_map: HashMap<
-        Key<policy::Ascii>,
-        (IdentStr<Quote, policy::Ascii, BoxSpill>, usize),
-    > = MAP_NAMES_SHORT
+    let key_short_entry_map: HashMap<AsciiKey, AsciiEntry> = MAP_NAMES_SHORT
         .iter()
         .enumerate()
         .map(|(index, name)| {
@@ -2165,12 +2223,22 @@ fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| (naive_uncased_key(name), index))
         .collect();
+    let string_short_map: HashMap<StringKey, usize> = MAP_NAMES_SHORT_LOWER
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ((*name).to_owned(), index))
+        .collect();
+    let str_short_map: HashMap<StaticKey, usize> = MAP_NAMES_SHORT_LOWER
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (*name, index))
+        .collect();
 
-    let identstr_short_queries: Vec<IdentStr<Quote, policy::Ascii, BoxSpill>> = MAP_NAMES_SHORT
+    let identstr_short_queries: Vec<AsciiIdent> = MAP_NAMES_SHORT
         .iter()
         .map(|name| IdentStr::new(name.to_ascii_lowercase()))
         .collect();
-    let key_short_queries: Vec<Key<policy::Ascii>> = MAP_NAMES_SHORT
+    let key_short_queries: Vec<AsciiKey> = MAP_NAMES_SHORT
         .iter()
         .map(|name| Key::new(&name.to_ascii_lowercase()))
         .collect();
@@ -2194,6 +2262,8 @@ fn bench_maps(c: &mut Criterion) {
         .iter()
         .map(|name| naive_uncased_key(&name.to_ascii_lowercase()))
         .collect();
+    let string_short_queries: Vec<StaticKey> = MAP_NAMES_SHORT_LOWER.to_vec();
+    let str_short_queries: Vec<StaticKey> = MAP_NAMES_SHORT_LOWER.to_vec();
 
     let mut group = c.benchmark_group("map_lookup_short");
     group.bench_function("identstr_box", |b| {
@@ -2273,6 +2343,30 @@ fn bench_maps(c: &mut Criterion) {
             let mut sum = 0usize;
             for query in &naive_uncased_short_queries {
                 sum += naive_uncased_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_short_queries {
+                sum += string_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_short_queries {
+                sum += str_short_map
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
@@ -2391,34 +2485,105 @@ fn bench_maps(c: &mut Criterion) {
             black_box(sum);
         });
     });
+    group.bench_function("string_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let lower = query.as_str().to_ascii_lowercase();
+                sum += string_short_map
+                    .get(black_box(lower.as_str()))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_short_queries {
+                sum += string_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string_cached_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_short_queries {
+                let (stored_key, value) = string_short_map
+                    .get_key_value(black_box(query))
+                    .expect("short string present");
+                black_box(stored_key);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_queries {
+                let lower = query.as_str().to_ascii_lowercase();
+                sum += str_short_map
+                    .get(black_box(lower.as_str()))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_short_queries {
+                sum += str_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_cached_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_short_queries {
+                let (stored_key, value) = str_short_map
+                    .get_key_value(black_box(query))
+                    .expect("short str present");
+                black_box(stored_key);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
     group.finish();
 
-    let identstr_long_map: HashMap<IdentStr<Quote, policy::Ascii, BoxSpill>, usize> =
-        MAP_NAMES_LONG
-            .iter()
-            .enumerate()
-            .map(|(index, name)| (IdentStr::new(*name), index))
-            .collect();
-    let identstr_long_arc_map: HashMap<IdentStr<Quote, policy::Ascii, ArcSpill>, usize> =
-        MAP_NAMES_LONG
-            .iter()
-            .enumerate()
-            .map(|(index, name)| {
-                (
-                    IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
-                    index,
-                )
-            })
-            .collect();
-    let key_long_map: HashMap<Key<policy::Ascii>, usize> = MAP_NAMES_LONG
+    let identstr_long_map: HashMap<AsciiIdent, usize> = MAP_NAMES_LONG
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (IdentStr::new(*name), index))
+        .collect();
+    let identstr_long_arc_map: HashMap<AsciiArcIdent, usize> = MAP_NAMES_LONG
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            (
+                IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                index,
+            )
+        })
+        .collect();
+    let key_long_map: HashMap<AsciiKey, usize> = MAP_NAMES_LONG
         .iter()
         .enumerate()
         .map(|(index, name)| (Key::new(name), index))
         .collect();
-    let key_long_entry_map: HashMap<
-        Key<policy::Ascii>,
-        (IdentStr<Quote, policy::Ascii, BoxSpill>, usize),
-    > = MAP_NAMES_LONG
+    let key_long_entry_map: HashMap<AsciiKey, AsciiEntry> = MAP_NAMES_LONG
         .iter()
         .enumerate()
         .map(|(index, name)| {
@@ -2452,12 +2617,22 @@ fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| (naive_uncased_key(name), index))
         .collect();
+    let string_long_map: HashMap<StringKey, usize> = MAP_NAMES_LONG_LOWER
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ((*name).to_owned(), index))
+        .collect();
+    let str_long_map: HashMap<StaticKey, usize> = MAP_NAMES_LONG_LOWER
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (*name, index))
+        .collect();
 
-    let identstr_long_queries: Vec<IdentStr<Quote, policy::Ascii, BoxSpill>> = MAP_NAMES_LONG
+    let identstr_long_queries: Vec<AsciiIdent> = MAP_NAMES_LONG
         .iter()
         .map(|name| IdentStr::new(name.to_ascii_lowercase()))
         .collect();
-    let identstr_long_arc_queries: Vec<IdentStr<Quote, policy::Ascii, ArcSpill>> = MAP_NAMES_LONG
+    let identstr_long_arc_queries: Vec<AsciiArcIdent> = MAP_NAMES_LONG
         .iter()
         .map(|name| IdentStr::<Quote, policy::Ascii, ArcSpill>::new(name.to_ascii_lowercase()))
         .collect();
@@ -2485,6 +2660,8 @@ fn bench_maps(c: &mut Criterion) {
         .iter()
         .map(|name| naive_uncased_key(&name.to_ascii_lowercase()))
         .collect();
+    let string_long_queries: Vec<StaticKey> = MAP_NAMES_LONG_LOWER.to_vec();
+    let str_long_queries: Vec<StaticKey> = MAP_NAMES_LONG_LOWER.to_vec();
 
     let mut group = c.benchmark_group("map_lookup_long");
     group.bench_function("identstr_box", |b| {
@@ -2576,6 +2753,30 @@ fn bench_maps(c: &mut Criterion) {
             let mut sum = 0usize;
             for query in &naive_uncased_long_queries {
                 sum += naive_uncased_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_long_queries {
+                sum += string_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_long_queries {
+                sum += str_long_map
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
@@ -2690,6 +2891,82 @@ fn bench_maps(c: &mut Criterion) {
                 black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
                     query.as_str(),
                 ));
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let lower = query.as_str().to_ascii_lowercase();
+                sum += string_long_map
+                    .get(black_box(lower.as_str()))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_long_queries {
+                sum += string_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("string_cached_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for &query in &string_long_queries {
+                let (stored_key, value) = string_long_map
+                    .get_key_value(black_box(query))
+                    .expect("long string present");
+                black_box(stored_key);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_from_ident", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_queries {
+                let lower = query.as_str().to_ascii_lowercase();
+                sum += str_long_map
+                    .get(black_box(lower.as_str()))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_cached", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_long_queries {
+                sum += str_long_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("str_cached_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &str_long_queries {
+                let (stored_key, value) = str_long_map
+                    .get_key_value(black_box(query))
+                    .expect("long str present");
+                black_box(stored_key);
+                sum += *value;
             }
             black_box(sum);
         });

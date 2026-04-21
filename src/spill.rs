@@ -2,14 +2,15 @@ use std::{ptr::NonNull, rc::Rc, sync::Arc};
 
 use crate::repr::Repr;
 
-pub mod sealed {
+mod sealed {
     pub trait Sealed {}
 }
 
 /// Storage backend used when an identifier is too large to stay inline.
 ///
 /// Choose [`BoxSpill`], [`ArcSpill`], or [`RcSpill`] based on how you want
-/// larger values to be owned and cloned.
+/// larger values to be owned and cloned. This trait is sealed and is only
+/// implemented by the built-in spill backends.
 pub trait Spill: sealed::Sealed + Copy + 'static {
     /// Owned string type used by this backend.
     type Owned: AsRef<str> + 'static;

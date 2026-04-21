@@ -18,27 +18,6 @@ pub use crate::unicode::policy::{UnicodeNfc, UnicodeNfkc, UnicodeTurkicNfc, Unic
 pub trait Policy: Copy + 'static {
     /// Returns whether two identifiers are equal under this policy.
     #[must_use]
-    fn eq_bytes(lhs: &[u8], rhs: &[u8]) -> bool {
-        Self::eq(unsafe { std::str::from_utf8_unchecked(lhs) }, unsafe {
-            std::str::from_utf8_unchecked(rhs)
-        })
-    }
-
-    /// Compares two identifiers under this policy.
-    #[must_use]
-    fn cmp_bytes(lhs: &[u8], rhs: &[u8]) -> Ordering {
-        Self::cmp(unsafe { std::str::from_utf8_unchecked(lhs) }, unsafe {
-            std::str::from_utf8_unchecked(rhs)
-        })
-    }
-
-    /// Hashes an identifier under this policy.
-    fn hash_bytes<H: Hasher>(value: &[u8], state: &mut H) {
-        Self::hash(unsafe { std::str::from_utf8_unchecked(value) }, state);
-    }
-
-    /// Returns whether two identifiers are equal under this policy.
-    #[must_use]
     fn eq(lhs: &str, rhs: &str) -> bool {
         Self::cmp(lhs, rhs).is_eq()
     }
@@ -108,10 +87,6 @@ fn ascii_key(value: Box<str>) -> Box<str> {
 
 #[inline]
 fn cmp_ascii(lhs: &str, rhs: &str) -> Ordering {
-    if !has_upper(lhs) && !has_upper(rhs) {
-        return lhs.as_bytes().cmp(rhs.as_bytes());
-    }
-
     cmp_ascii_bytes(lhs.as_bytes(), rhs.as_bytes())
 }
 
@@ -174,23 +149,6 @@ fn hash_ascii_bytes<H: Hasher>(bytes: &[u8], state: &mut H) {
 }
 
 impl Policy for Ascii {
-    #[inline]
-    fn eq_bytes(lhs: &[u8], rhs: &[u8]) -> bool {
-        eq_ascii(unsafe { std::str::from_utf8_unchecked(lhs) }, unsafe {
-            std::str::from_utf8_unchecked(rhs)
-        })
-    }
-
-    #[inline]
-    fn cmp_bytes(lhs: &[u8], rhs: &[u8]) -> Ordering {
-        cmp_ascii_bytes(lhs, rhs)
-    }
-
-    #[inline]
-    fn hash_bytes<H: Hasher>(value: &[u8], state: &mut H) {
-        hash_ascii_bytes(value, state);
-    }
-
     #[inline]
     fn eq(lhs: &str, rhs: &str) -> bool {
         eq_ascii(lhs, rhs)

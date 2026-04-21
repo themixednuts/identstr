@@ -4,6 +4,9 @@
 //! the source, when one was present. Matching, ordering, and hashing are
 //! case-insensitive by default.
 //!
+//! Use [`IdentStr::new`] for source text that may be quoted. Use
+//! [`IdentStr::from_raw`] when the input is already identifier text.
+//!
 //! [`Quote`] with [`policy::Ascii`] covers common SQL-style input. Enable the
 //! `unicode` feature for Unicode matching modes and security helpers.
 
@@ -220,27 +223,41 @@ fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
 }
 
 #[inline]
-fn unescape_source(value: &str, escape: u8) -> Cow<'_, str> {
+fn parse_quoted_inner(value: &str, escape: u8) -> Option<Cow<'_, str>> {
     let bytes = value.as_bytes();
     if bytes.len() < 2 {
-        return Cow::Borrowed(value);
+        return Some(Cow::Borrowed(value));
     }
 
     let mut index = 0;
 
     while index + 1 < bytes.len() {
-        if bytes[index] == escape && bytes[index + 1] == escape {
-            return Cow::Owned(unescape_source_slow(value, escape, index));
+        if bytes[index] == escape {
+            if bytes[index + 1] != escape {
+                return None;
+            }
+
+            return Some(Cow::Owned(parse_quoted_inner_slow(value, escape, index)?));
         }
 
         index += 1;
     }
 
-    Cow::Borrowed(value)
+    if bytes[index] == escape {
+        return None;
+    }
+
+    Some(Cow::Borrowed(value))
+}
+
+#[inline]
+pub(crate) fn parse_quoted_source<Q: QuoteTag>(value: &str) -> Option<(Q, Cow<'_, str>)> {
+    let (quote, inner) = Q::split_source(value)?;
+    Some((quote, parse_quoted_inner(inner, quote.close_byte())?))
 }
 
 #[cold]
-fn unescape_source_slow(value: &str, escape: u8, first_escape: usize) -> String {
+fn parse_quoted_inner_slow(value: &str, escape: u8, first_escape: usize) -> Option<String> {
     let bytes = value.as_bytes();
     let mut unescaped = String::with_capacity(value.len() - 1);
     unescaped.push_str(&value[..first_escape]);
@@ -249,18 +266,27 @@ fn unescape_source_slow(value: &str, escape: u8, first_escape: usize) -> String 
     let mut index = first_escape + 2;
     let mut start = index;
     while index + 1 < bytes.len() {
-        if bytes[index] == escape && bytes[index + 1] == escape {
-            unescaped.push_str(&value[start..index]);
-            unescaped.push(escape as char);
-            index += 2;
-            start = index;
-        } else {
+        if bytes[index] != escape {
             index += 1;
+            continue;
         }
+
+        if bytes[index + 1] != escape {
+            return None;
+        }
+
+        unescaped.push_str(&value[start..index]);
+        unescaped.push(escape as char);
+        index += 2;
+        start = index;
+    }
+
+    if index < bytes.len() && bytes[index] == escape {
+        return None;
     }
 
     unescaped.push_str(&value[start..]);
-    unescaped
+    Some(unescaped)
 }
 
 /// Quote type used by [`IdentStr`].
@@ -321,7 +347,8 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     ///
     /// When the input is surrounded by a recognized quote pair, the surrounding
     /// quotes are removed and doubled closing delimiters are unescaped.
-    /// Otherwise, the input is stored as unquoted identifier text.
+    /// Otherwise, including malformed quoted text, the input is stored as
+    /// unquoted identifier text.
     #[must_use]
     #[inline]
     pub fn new(value: impl Input<S>) -> Self {
@@ -437,14 +464,16 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     /// Returns a cached key for repeated comparisons under `P`.
     ///
-    /// This is useful when the same identifier participates in repeated map,
-    /// set, or lookup operations under one policy.
+    /// Most code can use [`IdentStr`] directly.
+    ///
+    /// Use this when you already keep a map or set keyed by [`Key`] and want
+    /// the matching canonical key for this identifier.
     #[must_use]
     pub fn to_key(&self) -> Key<P>
     where
         P: KeyPolicy,
     {
-        Key::new(self.as_str())
+        Key::from(self)
     }
 
     /// Returns a confusable skeleton for this identifier.
@@ -481,12 +510,11 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_ref(value: &str) -> Self {
-        let Some((quote, value)) = Q::split_source(value) else {
+        let Some((quote, value)) = parse_quoted_source::<Q>(value) else {
             return Self::from_ref(value, None);
         };
 
-        let escape = quote.close_byte();
-        match unescape_source(value, escape) {
+        match value {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
@@ -494,12 +522,11 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_owned(value: S::Owned) -> Self {
-        let Some((quote, inner)) = Q::split_source(value.as_ref()) else {
+        let Some((quote, value)) = parse_quoted_source::<Q>(value.as_ref()) else {
             return Self::from_owned(value, None);
         };
 
-        let escape = quote.close_byte();
-        match unescape_source(inner, escape) {
+        match value {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
@@ -507,12 +534,11 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
 
     #[inline]
     fn from_source_string(value: String) -> Self {
-        let Some((quote, inner)) = Q::split_source(&value) else {
+        let Some((quote, value)) = parse_quoted_source::<Q>(&value) else {
             return Self::from_string(value, None);
         };
 
-        let escape = quote.close_byte();
-        match unescape_source(inner, escape) {
+        match value {
             Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
@@ -734,7 +760,7 @@ impl<Q: QuoteTag, P: Policy, L: Spill, R: Spill> PartialEq<IdentStr<Q, P, R>>
 {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, R>) -> bool {
-        P::eq_bytes(self.as_bytes(), other.as_bytes())
+        P::eq(self.as_str(), other.as_str())
     }
 }
 
@@ -750,14 +776,14 @@ impl<Q: QuoteTag, P: Policy, S: Spill> PartialOrd for IdentStr<Q, P, S> {
 impl<Q: QuoteTag, P: Policy, S: Spill> Ord for IdentStr<Q, P, S> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        P::cmp_bytes(self.as_bytes(), other.as_bytes())
+        P::cmp(self.as_str(), other.as_str())
     }
 }
 
 impl<Q: QuoteTag, P: Policy, S: Spill> Hash for IdentStr<Q, P, S> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        P::hash_bytes(self.as_bytes(), state);
+        P::hash(self.as_str(), state);
     }
 }
 
@@ -820,7 +846,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> PartialEq<Rc<str>> for IdentStr<Q, P, S> 
 impl<Q: QuoteTag, P: KeyPolicy, S: Spill> PartialEq<Key<P>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Key<P>) -> bool {
-        P::eq_bytes(self.as_bytes(), other.as_bytes())
+        P::eq(self.as_str(), other.as_str())
     }
 }
 
@@ -1337,6 +1363,14 @@ mod tests {
     }
 
     #[test]
+    fn new_keeps_malformed_quoted_source_as_raw_text() {
+        let malformed = IdentStr::<Quote>::new("\"User\"Table\"");
+
+        assert_eq!(malformed.as_str(), "\"User\"Table\"");
+        assert_eq!(malformed.quote(), None);
+    }
+
+    #[test]
     fn from_raw_does_not_parse_quote_delimiters() {
         let name = IdentStr::<Quote>::from_raw("\"Users\"");
 
@@ -1448,40 +1482,41 @@ mod tests {
 
     #[test]
     fn key_caches_policy_text() {
-        let key = Key::<policy::Ascii>::new("Users");
+        let key = Key::<policy::Ascii>::new("\"Users\"");
         assert_eq!(key.as_str(), "users");
     }
 
     #[test]
-    fn key_compares_with_ident_and_string_types() {
+    fn key_from_raw_does_not_parse_quote_delimiters() {
+        let key = Key::<policy::Ascii>::from_raw("\"Users\"");
+        assert_eq!(key.as_str(), "\"users\"");
+    }
+
+    #[test]
+    fn key_compares_with_ident() {
         let ident = TestIdentStr::with_quote("Users", TestQuote::Double);
         let key = Key::<policy::Ascii>::new("Users");
-        let owned = String::from("uSeRs");
-        let cow = std::borrow::Cow::Borrowed("uSeRs");
-        let boxed = Box::<str>::from("uSeRs");
-        let shared = Arc::<str>::from("uSeRs");
-        let local = Rc::<str>::from("uSeRs");
 
-        assert_eq!(key, "uSeRs");
-        assert_eq!("uSeRs", key);
-        assert_eq!(key, owned);
-        assert_eq!(owned, key);
-        assert_eq!(key, cow);
-        assert_eq!(cow, key);
-        assert_eq!(key, boxed);
-        assert_eq!(boxed, key);
-        assert_eq!(key, shared);
-        assert_eq!(shared, key);
-        assert_eq!(key, local);
-        assert_eq!(local, key);
         assert_eq!(key, ident);
         assert_eq!(ident, key);
     }
 
     #[test]
+    fn key_lookup_uses_key_queries() {
+        let mut tables = std::collections::HashMap::new();
+        tables.insert(Key::<policy::Ascii>::new("\"Users\""), 7usize);
+
+        assert_eq!(tables.get(&Key::<policy::Ascii>::new("users")), Some(&7));
+        assert_eq!(
+            tables.get(&Key::<policy::Ascii>::new("\"users\"")),
+            Some(&7)
+        );
+    }
+
+    #[test]
     fn from_str_parses_ident_and_key() {
         let ident = IdentStr::<Quote>::from_str("\"Users\"").expect("infallible parse");
-        let key = Key::<policy::Ascii>::from_str("Users").expect("infallible parse");
+        let key = Key::<policy::Ascii>::from_str("\"Users\"").expect("infallible parse");
 
         assert_eq!(ident.as_str(), "Users");
         assert_eq!(ident.quote(), Some(Quote::Double));
@@ -1502,6 +1537,28 @@ mod tests {
         let key = Key::<policy::Ascii>::from(value);
         let value: Box<str> = key.into();
         assert_eq!(ptr, value.as_ptr());
+    }
+
+    #[test]
+    fn key_from_ident_keeps_raw_identifier_text() {
+        let ident = IdentStr::<Quote>::from_raw("\"Users\"");
+        let key = Key::<policy::Ascii>::from(&ident);
+
+        assert_eq!(key.as_str(), "\"users\"");
+    }
+
+    #[test]
+    fn key_uses_custom_quote_parser_when_requested() {
+        let key = Key::<policy::Ascii>::new_with_quotes::<TestQuote>("[Users]");
+
+        assert_eq!(key.as_str(), "users");
+    }
+
+    #[test]
+    fn malformed_key_source_stays_raw() {
+        let key = Key::<policy::Ascii>::new("\"User\"Table\"");
+
+        assert_eq!(key.as_str(), "\"user\"table\"");
     }
 
     #[test]
