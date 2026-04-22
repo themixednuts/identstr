@@ -30,12 +30,12 @@ pub trait Policy: Copy + 'static {
     fn hash<H: Hasher>(value: &str, state: &mut H);
 }
 
-/// Cached key generation for identifier policies.
+/// Owned lookup-key generation for identifier policies.
 pub trait KeyPolicy: Policy {
-    /// Converts owned text into the key form used by [`crate::Key`].
+    /// Converts owned text into the lookup form used by [`crate::Key`].
     fn into_key(value: Box<str>) -> Box<str>;
 
-    /// Builds a key from borrowed text.
+    /// Builds lookup text from borrowed input.
     #[must_use]
     fn key(value: &str) -> Box<str> {
         Self::into_key(Box::<str>::from(value))
@@ -44,8 +44,7 @@ pub trait KeyPolicy: Policy {
 
 /// ASCII case-insensitive comparison.
 ///
-/// This matches SQLite-style identifier semantics: ASCII letters fold by case,
-/// and non-ASCII bytes are compared exactly.
+/// ASCII letters fold by case, and non-ASCII bytes are compared exactly.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ascii;
 

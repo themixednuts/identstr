@@ -2,7 +2,7 @@
 name = "identstr"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.88"
 description = "Immutable identifier strings with preserved quote style and configurable comparison policy."
 license = "MIT"
 repository = "https://github.com/themixednuts/identstr"

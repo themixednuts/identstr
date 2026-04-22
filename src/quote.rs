@@ -1,6 +1,6 @@
 use crate::QuoteTag;
 
-/// Common SQL-style identifier quote delimiters.
+/// Common identifier quote delimiters.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Quote {

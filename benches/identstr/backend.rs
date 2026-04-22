@@ -269,6 +269,13 @@ pub(super) fn bench_drop(c: &mut Criterion) {
             BatchSize::SmallInput,
         );
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter_batched(
+            || IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(short, Quote::Double),
+            drop,
+            BatchSize::SmallInput,
+        );
+    });
     group.bench_function("naive_box", |b| {
         b.iter_batched(
             || NaiveBoxIdent::new(short, Some(Quote::Double)),

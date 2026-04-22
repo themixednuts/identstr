@@ -3,6 +3,9 @@ use super::*;
 fn bench_compare_short(c: &mut Criterion) {
     let lhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("Users", Quote::Double);
     let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("users");
+    let lhs_arc_ident =
+        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("Users", Quote::Double);
+    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("users");
     let lhs_box = NaiveBoxIdent::new("Users", Some(Quote::Double));
     let rhs_box = NaiveBoxIdent::new("users", None);
     let lhs_arc = NaiveArcIdent::new("Users", Some(Quote::Double));
@@ -18,6 +21,11 @@ fn bench_compare_short(c: &mut Criterion) {
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(eq_ident(black_box(&lhs_ident), black_box(&rhs_ident)));
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(black_box(&lhs_arc_ident) == black_box(&rhs_arc_ident));
         });
     });
     group.bench_function("naive_box", |b| {
@@ -59,6 +67,11 @@ fn bench_compare_short(c: &mut Criterion) {
             black_box(cmp_ident(black_box(&lhs_ident), black_box(&rhs_ident)));
         });
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(black_box(&lhs_arc_ident).cmp(black_box(&rhs_arc_ident)));
+        });
+    });
     group.bench_function("naive_box", |b| {
         b.iter(|| {
             black_box(cmp_naive_box(black_box(&lhs_box), black_box(&rhs_box)));
@@ -98,6 +111,12 @@ fn bench_compare_long(c: &mut Criterion) {
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
     let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+        "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
+    );
+    let lhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+        "this_identifier_name_is_long_enough_to_spill_out_of_line",
+    );
+    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
         "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
     );
     let lhs_box = NaiveBoxIdent::new(
@@ -147,6 +166,11 @@ fn bench_compare_long(c: &mut Criterion) {
             black_box(eq_ident(black_box(&lhs_ident), black_box(&rhs_ident)));
         });
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(black_box(&lhs_arc_ident) == black_box(&rhs_arc_ident));
+        });
+    });
     group.bench_function("naive_box", |b| {
         b.iter(|| {
             black_box(eq_naive_box(black_box(&lhs_box), black_box(&rhs_box)));
@@ -184,6 +208,11 @@ fn bench_compare_long(c: &mut Criterion) {
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(cmp_ident(black_box(&lhs_ident), black_box(&rhs_ident)));
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(black_box(&lhs_arc_ident).cmp(black_box(&rhs_arc_ident)));
         });
     });
     group.bench_function("naive_box", |b| {
@@ -272,6 +301,7 @@ pub(super) fn bench_hash(c: &mut Criterion) {
         ),
     ] {
         let ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(value);
+        let arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(value);
         let naive_box = NaiveBoxIdent::new(value, None);
         let naive_arc = NaiveArcIdent::new(value, None);
         let naive_rc = NaiveRcIdent::new(value, None);
@@ -282,6 +312,17 @@ pub(super) fn bench_hash(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("identstr_box", label),
             &ident,
+            |b, ident| {
+                b.iter(|| {
+                    let mut hasher = DefaultHasher::new();
+                    black_box(ident).hash(&mut hasher);
+                    black_box(hasher.finish());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("identstr_arc", label),
+            &arc_ident,
             |b, ident| {
                 b.iter(|| {
                     let mut hasher = DefaultHasher::new();

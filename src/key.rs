@@ -1,4 +1,4 @@
-//! Cached keys for identifier policies.
+//! Lookup keys for identifier text.
 
 use std::{
     borrow::Cow,
@@ -12,16 +12,16 @@ use std::{
 };
 
 use crate::{
-    Quote, QuoteTag,
+    Quote,
     policy::{self, KeyPolicy},
 };
 
-/// Owned key text for a [`crate::policy::KeyPolicy`].
+/// Owned lookup key for identifier text.
 ///
 /// Most code can use [`crate::IdentStr`] directly.
 ///
-/// Use `Key` when you already keep a separate map or set of canonicalized
-/// identifiers and want to query that collection with the same key type.
+/// Use `Key` when you store lookup keys separately from the original
+/// identifier text.
 pub struct Key<P: KeyPolicy = policy::Ascii> {
     value: Box<str>,
     marker: PhantomData<P>,
@@ -32,20 +32,11 @@ impl<P: KeyPolicy> Key<P> {
     ///
     /// When the input is surrounded by a recognized quote pair, the
     /// surrounding quotes are removed and doubled closing delimiters are
-    /// unescaped before the key text is cached. Otherwise, including malformed
-    /// quoted text, the input is cached as raw identifier text.
+    /// unescaped before the key text is stored. Otherwise, including malformed
+    /// quoted text, the input is stored as raw identifier text.
     #[must_use]
     pub fn new(value: &str) -> Self {
-        Self::new_with_quotes::<Quote>(value)
-    }
-
-    /// Builds a key from source text that uses the quote syntax from `Q`.
-    ///
-    /// Use this when the source text may be quoted with delimiters other than
-    /// the built-in [`Quote`] syntax.
-    #[must_use]
-    pub fn new_with_quotes<Q: QuoteTag>(value: &str) -> Self {
-        Self::from_source_ref::<Q>(value)
+        Self::from_source_ref(value)
     }
 
     /// Builds a key from already-unquoted identifier text.
@@ -57,28 +48,28 @@ impl<P: KeyPolicy> Key<P> {
         Self::from_box(P::key(value))
     }
 
-    /// Returns the cached key text.
+    /// Returns the lookup text.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.value
     }
 
-    /// Returns the stored key bytes.
+    /// Returns the lookup bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.value.as_bytes()
     }
 
-    fn from_source_ref<Q: QuoteTag>(value: &str) -> Self {
-        match crate::parse_quoted_source::<Q>(value) {
+    fn from_source_ref(value: &str) -> Self {
+        match crate::parse::quoted_source::<Quote>(value) {
             Some((_, Cow::Borrowed(value))) => Self::from_box(P::key(value)),
             Some((_, Cow::Owned(value))) => Self::from_box(P::into_key(value.into_boxed_str())),
             None => Self::from_raw(value),
         }
     }
 
-    fn from_source_box<Q: QuoteTag>(value: Box<str>) -> Self {
-        match crate::parse_quoted_source::<Q>(&value) {
+    fn from_source_box(value: Box<str>) -> Self {
+        match crate::parse::quoted_source::<Quote>(&value) {
             Some((_, Cow::Borrowed(value))) => Self::from_box(P::key(value)),
             Some((_, Cow::Owned(value))) => Self::from_box(P::into_key(value.into_boxed_str())),
             None => Self::from_box(P::into_key(value)),
@@ -182,7 +173,7 @@ impl<P: KeyPolicy> From<&str> for Key<P> {
 
 impl<P: KeyPolicy> From<String> for Key<P> {
     fn from(value: String) -> Self {
-        Self::from_source_box::<Quote>(value.into_boxed_str())
+        Self::from_source_box(value.into_boxed_str())
     }
 }
 
@@ -197,7 +188,7 @@ impl<'a, P: KeyPolicy> From<std::borrow::Cow<'a, str>> for Key<P> {
 
 impl<P: KeyPolicy> From<Box<str>> for Key<P> {
     fn from(value: Box<str>) -> Self {
-        Self::from_source_box::<Quote>(value)
+        Self::from_source_box(value)
     }
 }
 

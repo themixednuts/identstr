@@ -7,7 +7,7 @@ use unicode_security::{
     is_potential_mixed_script_confusable_char, skeleton as unicode_skeleton,
 };
 
-/// Cached confusable skeleton for identifier text.
+/// Confusable skeleton for identifier text.
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Skeleton(Box<str>);
 
@@ -18,7 +18,7 @@ impl Skeleton {
         Self(unicode_skeleton(value).collect::<String>().into_boxed_str())
     }
 
-    /// Returns the cached skeleton text.
+    /// Returns the skeleton text.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0

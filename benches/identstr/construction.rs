@@ -1,10 +1,54 @@
 use super::*;
+use std::{borrow::Cow, convert::Infallible};
 
+fn undouble_turso_inner(inner: &str, quote: u8) -> Option<String> {
+    let bytes = inner.as_bytes();
+    let mut read = 0;
+
+    while read + 1 < bytes.len() {
+        if bytes[read] == quote && bytes[read + 1] == quote {
+            let mut out = Vec::with_capacity(bytes.len() - 1);
+            out.extend_from_slice(&bytes[..=read]);
+            read += 2;
+
+            while read < bytes.len() {
+                if read + 1 < bytes.len() && bytes[read] == quote && bytes[read + 1] == quote {
+                    out.push(quote);
+                    read += 2;
+                } else {
+                    out.push(bytes[read]);
+                    read += 1;
+                }
+            }
+
+            return Some(unsafe { String::from_utf8_unchecked(out) });
+        }
+
+        read += 1;
+    }
+
+    None
+}
+
+fn turso_parse_identifier_body(quote: Quote, inner: &str) -> Cow<'_, str> {
+    match quote {
+        Quote::Bracket => Cow::Borrowed(inner),
+        _ => match undouble_turso_inner(inner, quote.close_byte()) {
+            Some(value) => Cow::Owned(value),
+            None => Cow::Borrowed(inner),
+        },
+    }
+}
 fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
     let mut group = c.benchmark_group("construct_borrowed_short");
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(short));
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(short));
         });
     });
     group.bench_function("naive_box", |b| {
@@ -38,6 +82,14 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                short,
+                Quote::Double,
+            ));
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
                 short,
                 Quote::Double,
             ));
@@ -83,9 +135,24 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
             ));
         });
     });
+    group.bench_function("new_double_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+                source_double,
+            ));
+        });
+    });
     group.bench_function("with_quote_double", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer_id",
+                Quote::Double,
+            ));
+        });
+    });
+    group.bench_function("with_quote_double_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
                 "customer_id",
                 Quote::Double,
             ));
@@ -98,9 +165,24 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
             ));
         });
     });
+    group.bench_function("new_double_escaped_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+                source_double_escaped,
+            ));
+        });
+    });
     group.bench_function("with_quote_double_escaped", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer\"id",
+                Quote::Double,
+            ));
+        });
+    });
+    group.bench_function("with_quote_double_escaped_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
                 "customer\"id",
                 Quote::Double,
             ));
@@ -113,9 +195,24 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
             ));
         });
     });
+    group.bench_function("new_bracket_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+                source_bracket,
+            ));
+        });
+    });
     group.bench_function("with_quote_bracket", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                "customer_id",
+                Quote::Bracket,
+            ));
+        });
+    });
+    group.bench_function("with_quote_bracket_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
                 "customer_id",
                 Quote::Bracket,
             ));
@@ -128,12 +225,117 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
             ));
         });
     });
+    group.bench_function("new_bracket_escaped_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+                source_bracket_escaped,
+            ));
+        });
+    });
     group.bench_function("with_quote_bracket_escaped", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
                 "customer]id",
                 Quote::Bracket,
             ));
+        });
+    });
+    group.bench_function("with_quote_bracket_escaped_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
+                "customer]id",
+                Quote::Bracket,
+            ));
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("construct_borrowed_source_turso_hook");
+    group.bench_function("new_double", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_double,
+            ));
+        });
+    });
+    group.bench_function("try_new_with_turso_double", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, BoxSpill>::try_new_with(
+                    source_double,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
+        });
+    });
+    group.bench_function("try_new_with_turso_double_arc", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, ArcSpill>::try_new_with(
+                    source_double,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
+        });
+    });
+    group.bench_function("new_double_escaped", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_double_escaped,
+            ));
+        });
+    });
+    group.bench_function("try_new_with_turso_double_escaped", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, BoxSpill>::try_new_with(
+                    source_double_escaped,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
+        });
+    });
+    group.bench_function("try_new_with_turso_double_escaped_arc", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, ArcSpill>::try_new_with(
+                    source_double_escaped,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
+        });
+    });
+    group.bench_function("new_bracket", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+                source_bracket,
+            ));
+        });
+    });
+    group.bench_function("try_new_with_turso_bracket", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, BoxSpill>::try_new_with(
+                    source_bracket,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
+        });
+    });
+    group.bench_function("try_new_with_turso_bracket_arc", |b| {
+        b.iter(|| {
+            black_box(
+                IdentStr::<Quote, policy::Ascii, ArcSpill>::try_new_with(
+                    source_bracket,
+                    |quote, inner| Ok::<_, Infallible>(turso_parse_identifier_body(quote, inner)),
+                )
+                .expect("infallible parser"),
+            );
         });
     });
     group.finish();
@@ -219,6 +421,13 @@ fn bench_owned_construction_short(c: &mut Criterion, short_owned: &str) {
             )));
         });
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::from(black_box(
+                short_owned.to_owned(),
+            )));
+        });
+    });
     group.bench_function("naive_box", |b| {
         b.iter(|| {
             black_box(NaiveBoxIdent {
@@ -272,6 +481,14 @@ fn bench_owned_construction_quoted_inline(c: &mut Criterion, short_owned: &str) 
             ));
         });
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
+                black_box(short_owned.to_owned()),
+                Quote::Double,
+            ));
+        });
+    });
     group.bench_function("naive_box", |b| {
         b.iter(|| {
             black_box(NaiveBoxIdent {
@@ -320,6 +537,13 @@ fn bench_owned_construction_long(c: &mut Criterion, long_owned: &str) {
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from(black_box(
+                long_owned.to_owned(),
+            )));
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::from(black_box(
                 long_owned.to_owned(),
             )));
         });

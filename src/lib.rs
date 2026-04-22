@@ -7,8 +7,9 @@
 //! Use [`IdentStr::new`] for source text that may be quoted. Use
 //! [`IdentStr::from_raw`] when the input is already identifier text.
 //!
-//! [`Quote`] with [`policy::Ascii`] covers common SQL-style input. Enable the
-//! `unicode` feature for Unicode matching modes and security helpers.
+//! [`Quote`] with [`policy::Ascii`] covers common quoted identifier input.
+//! Enable the `unicode` feature for Unicode matching modes and security
+//! helpers.
 
 pub mod key;
 pub mod policy;
@@ -17,12 +18,12 @@ pub mod unicode;
 #[cfg(feature = "unicode")]
 pub use unicode::security;
 
+mod input;
+mod parse;
 mod quote;
+mod render;
 mod repr;
 mod spill;
-mod private {
-    pub trait Sealed {}
-}
 
 use std::{
     borrow::Cow,
@@ -37,6 +38,8 @@ use std::{
     sync::Arc,
 };
 
+#[doc(hidden)]
+pub use input::Input;
 pub use key::Key;
 pub use quote::Quote;
 pub use spill::{ArcSpill, BoxSpill, RcSpill, Spill};
@@ -72,240 +75,32 @@ const INLINE_LEN_U8: [u8; INLINE_CAPACITY + 1] = [
     16,
 ];
 
-const fn quote_escape_byte(quote: Quote) -> u8 {
-    match quote {
-        Quote::Double => b'"',
-        Quote::Single => b'\'',
-        Quote::Backtick => b'`',
-        Quote::Bracket => b']',
-    }
-}
-
-#[inline]
-fn find_byte(value: &str, needle: u8) -> Option<usize> {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] == needle {
-            return Some(index);
-        }
-
-        index += 1;
-    }
-
-    None
-}
-
-#[inline]
-fn find_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> Option<usize> {
-    while index < bytes.len() {
-        if bytes[index] == needle {
-            return Some(index);
-        }
-
-        index += 1;
-    }
-
-    None
-}
-
-#[inline]
-fn count_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> usize {
-    let mut count = 0;
-
-    while index < bytes.len() {
-        count += usize::from(bytes[index] == needle);
-        index += 1;
-    }
-
-    count
-}
-
-#[inline]
-fn push_simple_quoted(value: &str, quote: Quote, output: &mut String) {
-    output.push(quote.open());
-    output.push_str(value);
-    output.push(quote.close());
-}
-
-#[cold]
-fn push_escaped_quoted(value: &str, quote: Quote, first_escape: usize, output: &mut String) {
-    let close = quote.close();
-    let escape = quote_escape_byte(quote);
-    let bytes = value.as_bytes();
-    let mut start = 0;
-    let mut index = first_escape;
-
-    output.push(quote.open());
-
-    loop {
-        output.push_str(&value[start..index]);
-        output.push(close);
-        output.push(close);
-        start = index + 1;
-
-        let Some(next_escape) = find_byte_from(bytes, escape, start) else {
-            break;
-        };
-
-        index = next_escape;
-    }
-
-    output.push_str(&value[start..]);
-    output.push(close);
-}
-
-#[cold]
-fn write_escaped_quoted_to(
-    value: &str,
-    quote: Quote,
-    first_escape: usize,
-    output: &mut (impl fmt::Write + ?Sized),
-) -> fmt::Result {
-    let close = quote.close();
-    let escape = quote_escape_byte(quote);
-    let bytes = value.as_bytes();
-    let mut start = 0;
-    let mut index = first_escape;
-
-    output.write_char(quote.open())?;
-
-    loop {
-        output.write_str(&value[start..index])?;
-        output.write_char(close)?;
-        output.write_char(close)?;
-        start = index + 1;
-
-        let Some(next_escape) = find_byte_from(bytes, escape, start) else {
-            break;
-        };
-
-        index = next_escape;
-    }
-
-    output.write_str(&value[start..])?;
-    output.write_char(close)
-}
-
-fn write_quoted_to(
-    value: &str,
-    quote: Option<Quote>,
-    output: &mut (impl fmt::Write + ?Sized),
-) -> fmt::Result {
-    let Some(quote) = quote else {
-        return output.write_str(value);
-    };
-
-    let escape = quote_escape_byte(quote);
-    if let Some(first_escape) = find_byte(value, escape) {
-        return write_escaped_quoted_to(value, quote, first_escape, output);
-    }
-
-    output.write_char(quote.open())?;
-    output.write_str(value)?;
-    output.write_char(quote.close())
-}
-
-fn push_quoted_to(value: &str, quote: Option<Quote>, output: &mut String) {
-    let Some(quote) = quote else {
-        output.push_str(value);
-        return;
-    };
-
-    let escape = quote_escape_byte(quote);
-    if let Some(first_escape) = find_byte(value, escape) {
-        push_escaped_quoted(value, quote, first_escape, output);
-        return;
-    }
-
-    push_simple_quoted(value, quote, output);
-}
-
-#[inline]
-fn parse_quoted_inner(value: &str, escape: u8) -> Option<Cow<'_, str>> {
-    let bytes = value.as_bytes();
-    if bytes.len() < 2 {
-        return Some(Cow::Borrowed(value));
-    }
-
-    let mut index = 0;
-
-    while index + 1 < bytes.len() {
-        if bytes[index] == escape {
-            if bytes[index + 1] != escape {
-                return None;
-            }
-
-            return Some(Cow::Owned(parse_quoted_inner_slow(value, escape, index)?));
-        }
-
-        index += 1;
-    }
-
-    if bytes[index] == escape {
-        return None;
-    }
-
-    Some(Cow::Borrowed(value))
-}
-
-#[inline]
-pub(crate) fn parse_quoted_source<Q: QuoteTag>(value: &str) -> Option<(Q, Cow<'_, str>)> {
-    let (quote, inner) = Q::split_source(value)?;
-    Some((quote, parse_quoted_inner(inner, quote.close_byte())?))
-}
-
-#[cold]
-fn parse_quoted_inner_slow(value: &str, escape: u8, first_escape: usize) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut unescaped = String::with_capacity(value.len() - 1);
-    unescaped.push_str(&value[..first_escape]);
-    unescaped.push(escape as char);
-
-    let mut index = first_escape + 2;
-    let mut start = index;
-    while index + 1 < bytes.len() {
-        if bytes[index] != escape {
-            index += 1;
-            continue;
-        }
-
-        if bytes[index + 1] != escape {
-            return None;
-        }
-
-        unescaped.push_str(&value[start..index]);
-        unescaped.push(escape as char);
-        index += 2;
-        start = index;
-    }
-
-    if index < bytes.len() && bytes[index] == escape {
-        return None;
-    }
-
-    unescaped.push_str(&value[start..]);
-    Some(unescaped)
-}
-
-/// Quote type used by [`IdentStr`].
+/// Quote syntax used by [`IdentStr`].
 ///
-/// [`Quote`] covers common SQL delimiters. Implement this trait when your input
-/// format uses different delimiter pairs.
+/// [`Quote`] covers common single-byte delimiters. Implement this trait when
+/// your input format uses different delimiter pairs.
 pub trait QuoteTag: Copy + Eq + 'static {
     /// Returns a stable tag for this quote style.
+    ///
+    /// Tags `1..=31` are valid. Tag `0` is reserved for unquoted text. Tags
+    /// `1..=15` can be stored inline; tags `16..=31` force quoted identifiers
+    /// into the spill backend.
     fn encode(self) -> u8;
 
     /// Restores a quote style from [`encode`](Self::encode).
+    ///
+    /// Return `None` for unknown tags.
     fn decode(tag: u8) -> Option<Self>;
 
-    /// Returns the closing delimiter byte.
+    /// Returns the single-byte closing delimiter.
     #[must_use]
     fn close_byte(self) -> u8;
 
-    /// Parses quoted source text and returns the quote marker with the inner
-    /// identifier text.
+    /// Detects quoted source text and returns the quote marker with the inner
+    /// text.
+    ///
+    /// This only identifies the outer delimiter pair. [`IdentStr::new`] handles
+    /// doubled closing delimiters after the split.
     ///
     /// Return `None` when `value` should be treated as unquoted text.
     #[must_use]
@@ -323,17 +118,9 @@ pub struct IdentStr<Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Spill = B
 }
 
 /// Display adapter for rendering an identifier with its preserved quotes.
+#[derive(Clone, Copy)]
 pub struct Quoted<'a, P: Policy = policy::Ascii, S: Spill = BoxSpill> {
     ident: &'a IdentStr<Quote, P, S>,
-}
-
-#[doc(hidden)]
-pub trait Input<S: Spill>: private::Sealed {
-    #[doc(hidden)]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, S>;
-
-    #[doc(hidden)]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, S>;
 }
 
 impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
@@ -352,7 +139,42 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     #[must_use]
     #[inline]
     pub fn new(value: impl Input<S>) -> Self {
-        value.into_source_identstr::<Q, P>()
+        value.into_source::<Q, P>()
+    }
+
+    /// Creates an identifier from source text with caller-provided inner
+    /// parsing for quoted input.
+    ///
+    /// `Q` still decides whether `source` is wrapped in a recognized quote
+    /// pair. When it is, `parser` receives the quote marker and the raw inner
+    /// text without the outer delimiters. The callback may return a borrowed
+    /// `&str`, an owned `String`, or a `Cow<str>`.
+    ///
+    /// The callback runs instead of the built-in doubled-delimiter unescaping.
+    ///
+    /// Unquoted input is stored as raw identifier text and does not call
+    /// `parse_inner`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from `parse_inner` when quoted input cannot be parsed.
+    #[inline]
+    pub fn try_new_with<'a, E, R>(
+        source: &'a str,
+        parser: impl FnOnce(Q, &'a str) -> Result<R, E>,
+    ) -> Result<Self, E>
+    where
+        R: Into<Cow<'a, str>>,
+    {
+        let Some((quote, inner)) = Q::split_source(source) else {
+            return Ok(Self::from_borrowed(source, None));
+        };
+
+        let value = parser(quote, inner)?.into();
+        Ok(match value {
+            Cow::Borrowed(value) => Self::from_borrowed(value, Some(quote)),
+            Cow::Owned(value) => Self::from_string(value, Some(quote)),
+        })
     }
 
     /// Creates an identifier from already-unquoted text.
@@ -362,7 +184,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     #[must_use]
     #[inline]
     pub fn from_raw(value: impl Input<S>) -> Self {
-        value.into_identstr::<Q, P>(None)
+        value.into_raw::<Q, P>(None)
     }
 
     /// Creates an identifier from already-unquoted text with quote metadata.
@@ -396,7 +218,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
         I: TryInto<Q>,
     {
         let quote = quote.try_into()?;
-        Ok(value.into_identstr::<Q, P>(Some(quote)))
+        Ok(value.into_raw::<Q, P>(Some(quote)))
     }
 
     /// Returns the stored identifier text without surrounding quotes.
@@ -417,7 +239,10 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     #[must_use]
     #[inline]
     pub fn quote(&self) -> Option<Q> {
-        Q::decode(self.repr.quote_tag())
+        match self.repr.quote_tag() {
+            0 => None,
+            tag => Q::decode(tag),
+        }
     }
 
     /// Returns `true` when the text is stored inline.
@@ -462,12 +287,10 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
         }
     }
 
-    /// Returns a cached key for repeated comparisons under `P`.
+    /// Builds an owned lookup key under `P`.
     ///
-    /// Most code can use [`IdentStr`] directly.
-    ///
-    /// Use this when you already keep a map or set keyed by [`Key`] and want
-    /// the matching canonical key for this identifier.
+    /// Most code can use [`IdentStr`] directly. Use this when you store
+    /// lookup keys separately from the original identifier text.
     #[must_use]
     pub fn to_key(&self) -> Key<P>
     where
@@ -491,78 +314,78 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     }
 
     #[inline]
-    fn from_ref(value: &str, quote: Option<Q>) -> Self {
-        if value.len() <= Self::inline_cap(quote) {
-            Self::from_inline(value, quote)
-        } else {
-            Self::new_heap(S::from_borrowed(value), quote)
+    pub(crate) fn from_borrowed(value: &str, quote: Option<Q>) -> Self {
+        if let Some(inline) = Self::try_inline(value, quote) {
+            return inline;
         }
+
+        Self::from_heap(S::from_borrowed(value), quote)
     }
 
     #[inline]
-    fn from_owned(value: S::Owned, quote: Option<Q>) -> Self {
-        if value.as_ref().len() <= Self::inline_cap(quote) {
-            Self::from_inline(value.as_ref(), quote)
-        } else {
-            Self::new_heap(value, quote)
+    pub(crate) fn from_owned(value: S::Owned, quote: Option<Q>) -> Self {
+        if let Some(inline) = Self::try_inline(value.as_ref(), quote) {
+            return inline;
         }
+
+        Self::from_heap(value, quote)
     }
 
     #[inline]
-    fn from_source_ref(value: &str) -> Self {
-        let Some((quote, value)) = parse_quoted_source::<Q>(value) else {
-            return Self::from_ref(value, None);
+    pub(crate) fn from_source_borrowed(value: &str) -> Self {
+        let Some((quote, value)) = parse::quoted_source::<Q>(value) else {
+            return Self::from_borrowed(value, None);
         };
 
         match value {
-            Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
+            Cow::Borrowed(value) => Self::from_borrowed(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
     }
 
     #[inline]
-    fn from_source_owned(value: S::Owned) -> Self {
-        let Some((quote, value)) = parse_quoted_source::<Q>(value.as_ref()) else {
+    pub(crate) fn from_source_owned(value: S::Owned) -> Self {
+        let Some((quote, value)) = parse::quoted_source::<Q>(value.as_ref()) else {
             return Self::from_owned(value, None);
         };
 
         match value {
-            Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
+            Cow::Borrowed(value) => Self::from_borrowed(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
     }
 
     #[inline]
-    fn from_source_string(value: String) -> Self {
-        let Some((quote, value)) = parse_quoted_source::<Q>(&value) else {
+    pub(crate) fn from_source_string(value: String) -> Self {
+        let Some((quote, value)) = parse::quoted_source::<Q>(&value) else {
             return Self::from_string(value, None);
         };
 
         match value {
-            Cow::Borrowed(value) => Self::from_ref(value, Some(quote)),
+            Cow::Borrowed(value) => Self::from_borrowed(value, Some(quote)),
             Cow::Owned(value) => Self::from_string(value, Some(quote)),
         }
     }
 
     #[inline]
-    fn from_string(value: String, quote: Option<Q>) -> Self {
-        if value.len() <= Self::inline_cap(quote) {
-            Self::from_inline(&value, quote)
-        } else {
-            Self::new_heap(S::from_box(value.into_boxed_str()), quote)
+    pub(crate) fn from_string(value: String, quote: Option<Q>) -> Self {
+        if let Some(inline) = Self::try_inline(&value, quote) {
+            return inline;
         }
+
+        Self::from_heap(S::from_box(value.into_boxed_str()), quote)
     }
 
     #[inline]
-    fn from_inline(value: &str, quote: Option<Q>) -> Self {
+    fn from_inline(value: &str, quote_tag: Option<u8>) -> Self {
         Self {
-            repr: Repr::new_inline(Self::inline_bytes(value, quote.and_then(Self::inline_tag))),
+            repr: Repr::new_inline(Self::inline_bytes(value, quote_tag)),
             marker: PhantomData,
         }
     }
 
     #[inline]
-    fn new_heap(value: S::Owned, quote: Option<Q>) -> Self {
+    fn from_heap(value: S::Owned, quote: Option<Q>) -> Self {
         Self {
             repr: S::into_repr(value, Self::heap_tag(quote)),
             marker: PhantomData,
@@ -570,23 +393,31 @@ impl<Q: QuoteTag, P: Policy, S: Spill> IdentStr<Q, P, S> {
     }
 
     #[inline]
-    fn inline_cap(quote: Option<Q>) -> usize {
-        match quote.and_then(Self::inline_tag) {
-            Some(_) => QUOTED_INLINE_CAPACITY,
-            None if quote.is_none() => INLINE_CAPACITY,
-            None => 0,
+    fn try_inline(value: &str, quote: Option<Q>) -> Option<Self> {
+        match quote {
+            Some(quote) => {
+                let tag = Self::inline_tag(quote)?;
+                (value.len() <= QUOTED_INLINE_CAPACITY).then(|| Self::from_inline(value, Some(tag)))
+            }
+            None => (value.len() <= INLINE_CAPACITY).then(|| Self::from_inline(value, None)),
         }
     }
 
     #[inline]
     fn inline_tag(quote: Q) -> Option<u8> {
         let tag = quote.encode();
+        assert!(tag != 0, "quote tag 0 is reserved for unquoted text");
         (tag <= Repr::MAX_INLINE_QUOTE_TAG).then_some(tag)
     }
 
     #[inline]
     fn heap_tag(quote: Option<Q>) -> u8 {
-        let tag = quote.map_or(0, QuoteTag::encode);
+        let Some(quote) = quote else {
+            return 0;
+        };
+
+        let tag = quote.encode();
+        assert!(tag != 0, "quote tag 0 is reserved for unquoted text");
         assert!(
             tag <= Repr::MAX_HEAP_QUOTE_TAG,
             "quote tag does not fit heap marker space",
@@ -643,7 +474,7 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
     /// Use this with `format!`, `write!`, or logging APIs when an owned
     /// [`String`] is not needed.
     #[must_use]
-    pub fn display_quoted(&self) -> Quoted<'_, P, S> {
+    pub const fn display_quoted(&self) -> Quoted<'_, P, S> {
         Quoted { ident: self }
     }
 
@@ -653,29 +484,13 @@ impl<P: Policy, S: Spill> IdentStr<Quote, P, S> {
     ///
     /// Returns an error if the destination writer fails.
     pub fn write_quoted(&self, output: &mut (impl fmt::Write + ?Sized)) -> fmt::Result {
-        write_quoted_to(self.as_str(), self.quote(), output)
+        render::write_quoted(self.as_str(), self.quote(), output)
     }
 
     /// Returns this identifier rendered with its quotes.
     #[must_use]
     pub fn to_quoted_string(&self) -> String {
-        let value = self.as_str();
-        let Some(quote) = self.quote() else {
-            return value.to_owned();
-        };
-
-        let escape = quote_escape_byte(quote);
-        let bytes = value.as_bytes();
-        let capacity = match find_byte(value, escape) {
-            Some(first_escape) => {
-                value.len() + 3 + count_byte_from(bytes, escape, first_escape + 1)
-            }
-            None => value.len() + 2,
-        };
-
-        let mut rendered = String::with_capacity(capacity);
-        push_quoted_to(value, Some(quote), &mut rendered);
-        rendered
+        render::to_string(self.as_str(), self.quote())
     }
 }
 
@@ -909,7 +724,7 @@ impl<Q: QuoteTag, P: Policy, S: Spill> PartialEq<IdentStr<Q, P, S>> for Rc<str> 
 impl<Q: QuoteTag, P: Policy, S: Spill> From<&str> for IdentStr<Q, P, S> {
     #[inline]
     fn from(value: &str) -> Self {
-        Self::from_source_ref(value)
+        Self::from_source_borrowed(value)
     }
 }
 
@@ -924,7 +739,7 @@ impl<'a, Q: QuoteTag, P: Policy, S: Spill> From<Cow<'a, str>> for IdentStr<Q, P,
     #[inline]
     fn from(value: Cow<'a, str>) -> Self {
         match value {
-            Cow::Borrowed(value) => Self::from_source_ref(value),
+            Cow::Borrowed(value) => Self::from_source_borrowed(value),
             Cow::Owned(value) => Self::from_source_string(value),
         }
     }
@@ -978,102 +793,12 @@ impl<Q: QuoteTag, P: Policy, S: Spill> FromStr for IdentStr<Q, P, S> {
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_source_ref(s))
+        Ok(Self::from_source_borrowed(s))
     }
 }
 
 unsafe impl<Q: QuoteTag, P: Policy, S: Spill> Send for IdentStr<Q, P, S> where S::Owned: Send {}
 unsafe impl<Q: QuoteTag, P: Policy, S: Spill> Sync for IdentStr<Q, P, S> where S::Owned: Sync {}
-
-impl<T: ?Sized + AsRef<str>> private::Sealed for &T {}
-
-impl<S: Spill, T: ?Sized + AsRef<str>> Input<S> for &T {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, S> {
-        IdentStr::from_ref(self.as_ref(), quote)
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, S> {
-        IdentStr::from_source_ref(self.as_ref())
-    }
-}
-
-impl private::Sealed for String {}
-
-impl<S: Spill> Input<S> for String {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, S> {
-        IdentStr::from_string(self, quote)
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, S> {
-        IdentStr::from_source_string(self)
-    }
-}
-
-impl private::Sealed for Cow<'_, str> {}
-
-impl<S: Spill> Input<S> for Cow<'_, str> {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, S> {
-        match self {
-            Cow::Borrowed(value) => IdentStr::from_ref(value, quote),
-            Cow::Owned(value) => IdentStr::from_string(value, quote),
-        }
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, S> {
-        match self {
-            Cow::Borrowed(value) => IdentStr::from_source_ref(value),
-            Cow::Owned(value) => IdentStr::from_source_string(value),
-        }
-    }
-}
-
-impl private::Sealed for Box<str> {}
-
-impl Input<BoxSpill> for Box<str> {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, BoxSpill> {
-        IdentStr::from_owned(self, quote)
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, BoxSpill> {
-        IdentStr::from_source_owned(self)
-    }
-}
-
-impl private::Sealed for Arc<str> {}
-
-impl Input<ArcSpill> for Arc<str> {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, ArcSpill> {
-        IdentStr::from_owned(self, quote)
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, ArcSpill> {
-        IdentStr::from_source_owned(self)
-    }
-}
-
-impl private::Sealed for Rc<str> {}
-
-impl Input<RcSpill> for Rc<str> {
-    #[inline]
-    fn into_identstr<Q: QuoteTag, P: Policy>(self, quote: Option<Q>) -> IdentStr<Q, P, RcSpill> {
-        IdentStr::from_owned(self, quote)
-    }
-
-    #[inline]
-    fn into_source_identstr<Q: QuoteTag, P: Policy>(self) -> IdentStr<Q, P, RcSpill> {
-        IdentStr::from_source_owned(self)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1167,6 +892,33 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ZeroQuote {
+        Custom,
+    }
+
+    impl QuoteTag for ZeroQuote {
+        fn encode(self) -> u8 {
+            match self {
+                Self::Custom => 0,
+            }
+        }
+
+        fn decode(_tag: u8) -> Option<Self> {
+            None
+        }
+
+        fn close_byte(self) -> u8 {
+            match self {
+                Self::Custom => b'"',
+            }
+        }
+
+        fn split_source(_value: &str) -> Option<(Self, &str)> {
+            None
+        }
+    }
+
     type TestIdentStr = IdentStr<TestQuote>;
 
     #[test]
@@ -1200,6 +952,16 @@ mod tests {
 
         assert!(inline_name.is_inline());
         assert!(!spill_name.is_inline());
+    }
+
+    #[test]
+    fn full_inline_unquoted_roundtrips_utf8_tail() {
+        let value = "a".repeat(TestIdentStr::INLINE_CAPACITY - "é".len()) + "é";
+        let name = TestIdentStr::new(value.as_str());
+
+        assert!(name.is_inline());
+        assert_eq!(name.as_str(), value);
+        assert_eq!(name.as_bytes(), value.as_bytes());
     }
 
     #[test]
@@ -1371,6 +1133,49 @@ mod tests {
     }
 
     #[test]
+    fn try_new_with_skips_inner_parser_for_unquoted_text() {
+        let ident = IdentStr::<Quote>::try_new_with("Users", |_, _| -> Result<&str, ()> {
+            panic!("inner parser should not run for unquoted input")
+        })
+        .expect("unquoted input should succeed");
+
+        assert_eq!(ident.as_str(), "Users");
+        assert_eq!(ident.quote(), None);
+    }
+
+    #[test]
+    fn try_new_with_uses_callback_result_for_quoted_text() {
+        let ident = IdentStr::<Quote>::try_new_with("\"User\"\"Table\"", |_quote, inner| {
+            Ok::<_, ()>(inner)
+        })
+        .expect("quoted input should succeed");
+
+        assert_eq!(ident.as_str(), "User\"\"Table");
+        assert_eq!(ident.quote(), Some(Quote::Double));
+    }
+
+    #[test]
+    fn try_new_with_accepts_owned_inner_text() {
+        let ident = IdentStr::<Quote>::try_new_with("\"User\"\"Table\"", |_quote, inner| {
+            Ok::<_, ()>(inner.replace("\"\"", "\""))
+        })
+        .expect("quoted input should succeed");
+
+        assert_eq!(ident.as_str(), "User\"Table");
+        assert_eq!(ident.quote(), Some(Quote::Double));
+    }
+
+    #[test]
+    fn try_new_with_propagates_inner_parser_errors() {
+        let err = IdentStr::<Quote>::try_new_with("\"Users\"", |_quote, _inner| {
+            Result::<&str, _>::Err("bad quote")
+        })
+        .expect_err("quoted input should propagate errors");
+
+        assert_eq!(err, "bad quote");
+    }
+
+    #[test]
     fn from_raw_does_not_parse_quote_delimiters() {
         let name = IdentStr::<Quote>::from_raw("\"Users\"");
 
@@ -1417,6 +1222,20 @@ mod tests {
         assert!(!name.is_inline());
         assert_eq!(name.quote(), Some(HeapOnlyQuote::Custom));
         assert_eq!(name.as_str(), "short");
+    }
+
+    #[test]
+    fn empty_name_with_heap_only_quote_spills() {
+        let name = IdentStr::<HeapOnlyQuote>::with_quote("", HeapOnlyQuote::Custom);
+        assert!(!name.is_inline());
+        assert_eq!(name.quote(), Some(HeapOnlyQuote::Custom));
+        assert_eq!(name.as_str(), "");
+    }
+
+    #[test]
+    #[should_panic(expected = "quote tag 0 is reserved for unquoted text")]
+    fn quote_tag_zero_is_reserved() {
+        let _ = IdentStr::<ZeroQuote>::with_quote("short", ZeroQuote::Custom);
     }
 
     #[test]
@@ -1481,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn key_caches_policy_text() {
+    fn key_stores_lookup_text() {
         let key = Key::<policy::Ascii>::new("\"Users\"");
         assert_eq!(key.as_str(), "users");
     }
@@ -1525,7 +1344,7 @@ mod tests {
     }
 
     #[test]
-    fn key_reuses_owned_ascii_buffer_for_cached_text() {
+    fn key_reuses_owned_ascii_buffer_for_lookup_text() {
         let key = Key::<policy::Ascii>::from(Box::<str>::from("Users"));
         assert_eq!(key.as_str(), "users");
     }
@@ -1548,8 +1367,9 @@ mod tests {
     }
 
     #[test]
-    fn key_uses_custom_quote_parser_when_requested() {
-        let key = Key::<policy::Ascii>::new_with_quotes::<TestQuote>("[Users]");
+    fn key_from_custom_quoted_ident_uses_identifier_text() {
+        let ident = IdentStr::<TestQuote>::new("[Users]");
+        let key = Key::<policy::Ascii>::from(&ident);
 
         assert_eq!(key.as_str(), "users");
     }

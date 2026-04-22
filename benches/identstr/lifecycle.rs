@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn bench_clone(c: &mut Criterion) {
     let short_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("customer_id");
+    let short_shared = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("customer_id");
     let short_box = NaiveBoxIdent::new("customer_id", Some(Quote::Double));
     let short_arc = NaiveArcIdent::new("customer_id", Some(Quote::Double));
     let short_rc = NaiveRcIdent::new("customer_id", Some(Quote::Double));
@@ -39,6 +40,11 @@ pub(super) fn bench_clone(c: &mut Criterion) {
     group.bench_function("identstr_box", |b| {
         b.iter(|| {
             black_box(short_ident.clone());
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            black_box(short_shared.clone());
         });
     });
     group.bench_function("naive_box", |b| {

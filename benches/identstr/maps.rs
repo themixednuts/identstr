@@ -14,6 +14,18 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             black_box(map);
         });
     });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            let mut map = HashMap::with_capacity(MAP_NAMES_SHORT.len());
+            for (index, name) in MAP_NAMES_SHORT.iter().enumerate() {
+                map.insert(
+                    IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                    index,
+                );
+            }
+            black_box(map);
+        });
+    });
     group.bench_function("key", |b| {
         b.iter(|| {
             let mut map = HashMap::with_capacity(MAP_NAMES_SHORT.len());
@@ -156,6 +168,16 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| (IdentStr::new(*name), index))
         .collect();
+    let identstr_short_arc_map: HashMap<AsciiArcIdent, usize> = MAP_NAMES_SHORT
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            (
+                IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                index,
+            )
+        })
+        .collect();
     let key_short_map: HashMap<AsciiKey, usize> = MAP_NAMES_SHORT
         .iter()
         .enumerate()
@@ -210,6 +232,10 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .iter()
         .map(|name| IdentStr::new(name.to_ascii_lowercase()))
         .collect();
+    let identstr_short_arc_queries: Vec<AsciiArcIdent> = MAP_NAMES_SHORT
+        .iter()
+        .map(|name| IdentStr::<Quote, policy::Ascii, ArcSpill>::new(name.to_ascii_lowercase()))
+        .collect();
     let key_short_queries: Vec<AsciiKey> = MAP_NAMES_SHORT
         .iter()
         .map(|name| Key::new(&name.to_ascii_lowercase()))
@@ -243,6 +269,18 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             let mut sum = 0usize;
             for query in &identstr_short_queries {
                 sum += identstr_short_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_arc", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_arc_queries {
+                sum += identstr_short_arc_map
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
@@ -368,6 +406,31 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                 let (stored_ident, value) = identstr_short_map
                     .get_key_value(black_box(query))
                     .expect("short ident present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_arc_direct", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_arc_queries {
+                sum += identstr_short_arc_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_arc_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_short_arc_queries {
+                let (stored_ident, value) = identstr_short_arc_map
+                    .get_key_value(black_box(query))
+                    .expect("short arc ident present");
                 black_box(stored_ident);
                 sum += *value;
             }
@@ -778,6 +841,31 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                 let (stored_ident, value) = identstr_long_map
                     .get_key_value(black_box(query))
                     .expect("long ident present");
+                black_box(stored_ident);
+                sum += *value;
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_arc_direct", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_arc_queries {
+                sum += identstr_long_arc_map
+                    .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("identstr_arc_get_key_value", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for query in &identstr_long_arc_queries {
+                let (stored_ident, value) = identstr_long_arc_map
+                    .get_key_value(black_box(query))
+                    .expect("long arc ident present");
                 black_box(stored_ident);
                 sum += *value;
             }
