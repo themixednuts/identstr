@@ -8,7 +8,9 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     ops::Deref,
+    rc::Rc,
     str::FromStr,
+    sync::Arc,
 };
 
 use crate::{
@@ -147,6 +149,54 @@ impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Storage> PartialEq<crate::Ident
     }
 }
 
+impl<P: KeyPolicy> PartialEq<str> for Key<P> {
+    fn eq(&self, other: &str) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<&str> for Key<P> {
+    fn eq(&self, other: &&str) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<String> for Key<P> {
+    fn eq(&self, other: &String) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<&String> for Key<P> {
+    fn eq(&self, other: &&String) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<'a, P: KeyPolicy> PartialEq<Cow<'a, str>> for Key<P> {
+    fn eq(&self, other: &Cow<'a, str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Box<str>> for Key<P> {
+    fn eq(&self, other: &Box<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Arc<str>> for Key<P> {
+    fn eq(&self, other: &Arc<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Rc<str>> for Key<P> {
+    fn eq(&self, other: &Rc<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
 impl<P: KeyPolicy> Eq for Key<P> {}
 
 impl<P: KeyPolicy> PartialOrd for Key<P> {
@@ -164,6 +214,54 @@ impl<P: KeyPolicy> Ord for Key<P> {
 impl<P: KeyPolicy> Hash for Key<P> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         P::hash_key(self.as_str(), state);
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for str {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for &str {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for String {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for &String {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for Cow<'_, str> {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for Box<str> {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for Arc<str> {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Key<P>> for Rc<str> {
+    fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self, other.as_str())
     }
 }
 

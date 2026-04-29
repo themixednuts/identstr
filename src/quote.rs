@@ -122,6 +122,11 @@ impl QuoteTag for Quote {
     }
 
     #[inline]
+    fn open_byte(self) -> u8 {
+        self.open_byte()
+    }
+
+    #[inline]
     fn close_byte(self) -> u8 {
         self.close_byte()
     }

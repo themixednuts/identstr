@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::Quote;
+use crate::QuoteTag;
 
 #[inline]
 fn find_byte(value: &str, needle: u8) -> Option<usize> {
@@ -43,9 +43,15 @@ fn count_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> usize {
     count
 }
 
-pub(crate) fn write_quoted(
+#[inline]
+fn delimiter(byte: u8) -> char {
+    debug_assert!(byte.is_ascii(), "quote delimiter must be ASCII");
+    char::from(byte)
+}
+
+pub(crate) fn write_quoted<Q: QuoteTag>(
     value: &str,
-    quote: Option<Quote>,
+    quote: Option<Q>,
     output: &mut (impl fmt::Write + ?Sized),
 ) -> fmt::Result {
     let Some(quote) = quote else {
@@ -57,12 +63,12 @@ pub(crate) fn write_quoted(
         return write_escaped(value, quote, first_escape, output);
     }
 
-    output.write_char(quote.open())?;
+    output.write_char(delimiter(quote.open_byte()))?;
     output.write_str(value)?;
-    output.write_char(quote.close())
+    output.write_char(delimiter(quote.close_byte()))
 }
 
-pub(crate) fn to_string(value: &str, quote: Option<Quote>) -> String {
+pub(crate) fn to_string<Q: QuoteTag>(value: &str, quote: Option<Q>) -> String {
     let Some(quote) = quote else {
         return value.to_owned();
     };
@@ -83,21 +89,21 @@ pub(crate) fn to_string(value: &str, quote: Option<Quote>) -> String {
     rendered
 }
 
-fn push_unescaped(value: &str, quote: Quote, output: &mut String) {
-    output.push(quote.open());
+fn push_unescaped<Q: QuoteTag>(value: &str, quote: Q, output: &mut String) {
+    output.push(delimiter(quote.open_byte()));
     output.push_str(value);
-    output.push(quote.close());
+    output.push(delimiter(quote.close_byte()));
 }
 
 #[cold]
-fn push_escaped(value: &str, quote: Quote, first_escape: usize, output: &mut String) {
-    let close = quote.close();
+fn push_escaped<Q: QuoteTag>(value: &str, quote: Q, first_escape: usize, output: &mut String) {
+    let close = delimiter(quote.close_byte());
     let escape = quote.close_byte();
     let bytes = value.as_bytes();
     let mut start = 0;
     let mut index = first_escape;
 
-    output.push(quote.open());
+    output.push(delimiter(quote.open_byte()));
 
     loop {
         output.push_str(&value[start..index]);
@@ -117,19 +123,19 @@ fn push_escaped(value: &str, quote: Quote, first_escape: usize, output: &mut Str
 }
 
 #[cold]
-fn write_escaped(
+fn write_escaped<Q: QuoteTag>(
     value: &str,
-    quote: Quote,
+    quote: Q,
     first_escape: usize,
     output: &mut (impl fmt::Write + ?Sized),
 ) -> fmt::Result {
-    let close = quote.close();
+    let close = delimiter(quote.close_byte());
     let escape = quote.close_byte();
     let bytes = value.as_bytes();
     let mut start = 0;
     let mut index = first_escape;
 
-    output.write_char(quote.open())?;
+    output.write_char(delimiter(quote.open_byte()))?;
 
     loop {
         output.write_str(&value[start..index])?;

@@ -92,7 +92,11 @@ pub trait QuoteTag: Copy + Eq + 'static {
     /// Return `None` for unknown codes.
     fn decode(code: u8) -> Option<Self>;
 
-    /// Returns the single-byte closing delimiter.
+    /// Returns the ASCII opening delimiter.
+    #[must_use]
+    fn open_byte(self) -> u8;
+
+    /// Returns the ASCII closing delimiter.
     #[must_use]
     fn close_byte(self) -> u8;
 
@@ -119,8 +123,8 @@ pub struct IdentStr<Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Storage =
 
 /// Display adapter for rendering an identifier with its preserved quotes.
 #[derive(Clone, Copy)]
-pub struct Quoted<'a, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
-    ident: &'a IdentStr<Quote, P, S>,
+pub struct Quoted<'a, Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
+    ident: &'a IdentStr<Q, P, S>,
 }
 
 impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
@@ -313,6 +317,30 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
         security::analyze(self.as_str())
     }
 
+    /// Returns a formatter that renders this identifier with its quotes.
+    ///
+    /// Use this with `format!`, `write!`, or logging APIs when an owned
+    /// [`String`] is not needed.
+    #[must_use]
+    pub const fn display_quoted(&self) -> Quoted<'_, Q, P, S> {
+        Quoted { ident: self }
+    }
+
+    /// Writes this identifier with its quotes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the destination writer fails.
+    pub fn write_quoted(&self, output: &mut (impl fmt::Write + ?Sized)) -> fmt::Result {
+        render::write_quoted(self.as_str(), self.quote(), output)
+    }
+
+    /// Returns this identifier rendered with its quotes.
+    #[must_use]
+    pub fn to_quoted_string(&self) -> String {
+        render::to_string(self.as_str(), self.quote())
+    }
+
     #[inline]
     pub(crate) fn from_borrowed(value: &str, quote: Option<Q>) -> Self {
         if let Some(inline) = Self::try_inline(value, quote) {
@@ -468,33 +496,9 @@ impl<P: Policy, S: Storage> IdentStr<Quote, P, S> {
             marker: PhantomData,
         })
     }
-
-    /// Returns a formatter that renders this identifier with its quotes.
-    ///
-    /// Use this with `format!`, `write!`, or logging APIs when an owned
-    /// [`String`] is not needed.
-    #[must_use]
-    pub const fn display_quoted(&self) -> Quoted<'_, P, S> {
-        Quoted { ident: self }
-    }
-
-    /// Writes this identifier with its quotes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the destination writer fails.
-    pub fn write_quoted(&self, output: &mut (impl fmt::Write + ?Sized)) -> fmt::Result {
-        render::write_quoted(self.as_str(), self.quote(), output)
-    }
-
-    /// Returns this identifier rendered with its quotes.
-    #[must_use]
-    pub fn to_quoted_string(&self) -> String {
-        render::to_string(self.as_str(), self.quote())
-    }
 }
 
-impl<P: Policy, S: Storage> fmt::Display for Quoted<'_, P, S> {
+impl<Q: QuoteTag, P: Policy, S: Storage> fmt::Display for Quoted<'_, Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.ident.write_quoted(f)
     }
@@ -581,10 +585,12 @@ impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialEq<IdentStr<Q, P, R>
 
 impl<Q: QuoteTag, P: Policy, S: Storage> Eq for IdentStr<Q, P, S> {}
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialOrd for IdentStr<Q, P, S> {
+impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialOrd<IdentStr<Q, P, R>>
+    for IdentStr<Q, P, L>
+{
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+    fn partial_cmp(&self, other: &IdentStr<Q, P, R>) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other.as_str()))
     }
 }
 
@@ -835,6 +841,15 @@ mod tests {
             }
         }
 
+        fn open_byte(self) -> u8 {
+            match self {
+                Self::Double => b'"',
+                Self::Single => b'\'',
+                Self::Backtick => b'`',
+                Self::Bracket => b'[',
+            }
+        }
+
         fn close_byte(self) -> u8 {
             match self {
                 Self::Bracket => b']',
@@ -880,6 +895,10 @@ mod tests {
             }
         }
 
+        fn open_byte(self) -> u8 {
+            b'<'
+        }
+
         fn close_byte(self) -> u8 {
             b'\0'
         }
@@ -903,6 +922,12 @@ mod tests {
 
         fn decode(_tag: u8) -> Option<Self> {
             None
+        }
+
+        fn open_byte(self) -> u8 {
+            match self {
+                Self::Custom => b'"',
+            }
         }
 
         fn close_byte(self) -> u8 {
@@ -1205,6 +1230,18 @@ mod tests {
     }
 
     #[test]
+    fn custom_quote_tags_can_render_preserved_quote_style() {
+        let name = TestIdentStr::with_quote("User]Table", TestQuote::Bracket);
+        let mut rendered = String::new();
+
+        name.write_quoted(&mut rendered).unwrap();
+
+        assert_eq!(name.to_quoted_string(), "[User]]Table]");
+        assert_eq!(name.display_quoted().to_string(), "[User]]Table]");
+        assert_eq!(rendered, "[User]]Table]");
+    }
+
+    #[test]
     fn debug_includes_quote_metadata() {
         let quoted = IdentStr::<Quote>::with_quote("Users", Quote::Double);
         let unquoted = IdentStr::<Quote>::new("users");
@@ -1303,6 +1340,17 @@ mod tests {
     }
 
     #[test]
+    fn ordering_is_independent_of_storage_mode() {
+        let boxed = IdentStr::<TestQuote, policy::Ascii, BoxStorage>::from("Users");
+        let shared = IdentStr::<TestQuote, policy::Ascii, ArcStorage>::from("users");
+        let local = IdentStr::<TestQuote, policy::Ascii, RcStorage>::from("zz");
+
+        assert_eq!(boxed.partial_cmp(&shared), Some(Ordering::Equal));
+        assert_eq!(boxed.partial_cmp(&local), Some(Ordering::Less));
+        assert!(boxed < local);
+    }
+
+    #[test]
     fn key_stores_lookup_text() {
         let key = Key::<policy::Ascii>::new("\"Users\"");
         assert_eq!(key.as_str(), "users");
@@ -1321,6 +1369,25 @@ mod tests {
 
         assert_eq!(key, ident);
         assert_eq!(ident, key);
+    }
+
+    #[test]
+    fn key_compares_with_string_types() {
+        let key = Key::<policy::Ascii>::new("\"Users\"");
+        let owned = String::from("users");
+        let boxed = Box::<str>::from("users");
+        let shared = Arc::<str>::from("users");
+        let local = Rc::<str>::from("users");
+        let cow = std::borrow::Cow::Borrowed("users");
+
+        assert_eq!(key, "uSeRs");
+        assert_eq!("USERs", key);
+        assert_eq!(key, owned);
+        assert_eq!(key, boxed);
+        assert_eq!(key, shared);
+        assert_eq!(key, local);
+        assert_eq!(key, cow);
+        assert_ne!(key, "\"users\"");
     }
 
     #[test]
