@@ -1538,15 +1538,19 @@ mod tests {
     #[cfg(feature = "unicode")]
     #[test]
     fn unicode_turkic_policies_match_canonical_equivalents() {
-        let composed_nfc = IdentStr::<TestQuote, policy::UnicodeTurkicNfc>::from("İ");
-        let decomposed_nfc = IdentStr::<TestQuote, policy::UnicodeTurkicNfc>::from("I\u{307}");
-        let composed_nfkc = IdentStr::<TestQuote, policy::UnicodeTurkicNfkc>::from("İ");
-        let decomposed_nfkc = IdentStr::<TestQuote, policy::UnicodeTurkicNfkc>::from("I\u{307}");
+        let canonical = (
+            IdentStr::<TestQuote, policy::UnicodeTurkicNfc>::from("İ"),
+            IdentStr::<TestQuote, policy::UnicodeTurkicNfc>::from("I\u{307}"),
+        );
+        let compatibility = (
+            IdentStr::<TestQuote, policy::UnicodeTurkicNfkc>::from("İ"),
+            IdentStr::<TestQuote, policy::UnicodeTurkicNfkc>::from("I\u{307}"),
+        );
 
-        assert_eq!(composed_nfc, decomposed_nfc);
-        assert_eq!(hash_value(&composed_nfc), hash_value(&decomposed_nfc));
-        assert_eq!(composed_nfkc, decomposed_nfkc);
-        assert_eq!(hash_value(&composed_nfkc), hash_value(&decomposed_nfkc));
+        assert_eq!(canonical.0, canonical.1);
+        assert_eq!(hash_value(&canonical.0), hash_value(&canonical.1));
+        assert_eq!(compatibility.0, compatibility.1);
+        assert_eq!(hash_value(&compatibility.0), hash_value(&compatibility.1));
         assert_eq!(
             Key::<policy::UnicodeTurkicNfc>::new("İ"),
             Key::<policy::UnicodeTurkicNfc>::new("I\u{307}")
