@@ -40,6 +40,11 @@ pub trait KeyPolicy: Policy {
     fn key(value: &str) -> Box<str> {
         Self::into_key(Box::<str>::from(value))
     }
+
+    /// Hashes lookup text that was already produced by this policy.
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        Self::hash(value, state);
+    }
 }
 
 /// ASCII case-insensitive comparison.
@@ -168,5 +173,12 @@ impl KeyPolicy for Ascii {
     #[inline]
     fn into_key(value: Box<str>) -> Box<str> {
         ascii_key(value)
+    }
+
+    #[inline]
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        let bytes = value.as_bytes();
+        bytes.len().hash(state);
+        state.write(bytes);
     }
 }

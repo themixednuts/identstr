@@ -6,13 +6,13 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// Storage backend used when an identifier is too large to stay inline.
+/// Selects how allocated identifier text is owned and cloned.
 ///
-/// Choose [`BoxSpill`], [`ArcSpill`], or [`RcSpill`] based on how you want
-/// larger values to be owned and cloned. This trait is sealed and is only
-/// implemented by the built-in spill backends.
-pub trait Spill: sealed::Sealed + Copy + 'static {
-    /// Owned string type used by this backend.
+/// Choose [`BoxStorage`], [`ArcStorage`], or [`RcStorage`] based on how you
+/// want larger values to be shared. This trait is only implemented by the
+/// built-in storage modes.
+pub trait Storage: sealed::Sealed + Copy + 'static {
+    /// Owned string type used by this storage mode.
     type Owned: AsRef<str> + 'static;
 
     #[doc(hidden)]
@@ -34,13 +34,13 @@ pub trait Spill: sealed::Sealed + Copy + 'static {
     }
 }
 
-/// Spill storage backed by `Box<str>`.
+/// String storage backed by `Box<str>`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct BoxSpill;
+pub struct BoxStorage;
 
-impl sealed::Sealed for BoxSpill {}
+impl sealed::Sealed for BoxStorage {}
 
-impl Spill for BoxSpill {
+impl Storage for BoxStorage {
     type Owned = Box<str>;
 
     #[inline]
@@ -74,13 +74,13 @@ impl Spill for BoxSpill {
     }
 }
 
-/// Spill storage backed by `Arc<str>`.
+/// String storage backed by `Arc<str>`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ArcSpill;
+pub struct ArcStorage;
 
-impl sealed::Sealed for ArcSpill {}
+impl sealed::Sealed for ArcStorage {}
 
-impl Spill for ArcSpill {
+impl Storage for ArcStorage {
     type Owned = Arc<str>;
 
     #[inline]
@@ -119,13 +119,13 @@ impl Spill for ArcSpill {
     }
 }
 
-/// Spill storage backed by `Rc<str>`.
+/// String storage backed by `Rc<str>`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct RcSpill;
+pub struct RcStorage;
 
-impl sealed::Sealed for RcSpill {}
+impl sealed::Sealed for RcStorage {}
 
-impl Spill for RcSpill {
+impl Storage for RcStorage {
     type Owned = Rc<str>;
 
     #[inline]

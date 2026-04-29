@@ -16,11 +16,11 @@ use std::{
 
 use compact_str::CompactString;
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
-use identstr::{ArcSpill, BoxSpill, IdentStr, Key, Quote, RcSpill, policy};
+use identstr::{ArcStorage, BoxStorage, IdentStr, Key, Quote, RcStorage, policy};
 use uncased::Uncased;
 
-type AsciiIdent = IdentStr<Quote, policy::Ascii, BoxSpill>;
-type AsciiArcIdent = IdentStr<Quote, policy::Ascii, ArcSpill>;
+type AsciiIdent = IdentStr<Quote, policy::Ascii, BoxStorage>;
+type AsciiArcIdent = IdentStr<Quote, policy::Ascii, ArcStorage>;
 type AsciiKey = Key<policy::Ascii>;
 type AsciiEntry = (AsciiIdent, usize);
 type StringKey = String;
@@ -245,25 +245,25 @@ const MAP_NAMES_SHORT_LOWER: &[&str] = &[
 ];
 
 const MAP_NAMES_LONG: &[&str] = &[
-    "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE_ALPHA",
-    "this_identifier_name_is_long_enough_to_spill_out_of_line_beta",
-    "CustomerIdentifierNameThatSpillsOutOfLineGamma",
-    "line_item_identifier_name_that_spills_out_of_line_delta",
-    "SESSION_IDENTIFIER_NAME_THAT_SPILLS_OUT_OF_LINE_EPSILON",
-    "role_mapping_identifier_name_that_spills_out_of_line_zeta",
-    "audit_log_identifier_name_that_spills_out_of_line_eta",
-    "TeamIdentifierNameThatSpillsOutOfLineTheta",
+    "THIS_IDENTIFIER_NAME_WITH_EXTRA_CHARACTERS_ALPHA",
+    "this_identifier_name_with_extra_characters_beta",
+    "CustomerIdentifierNameWithExtraCharactersGamma",
+    "line_item_identifier_name_with_extra_characters_delta",
+    "SESSION_IDENTIFIER_NAME_WITH_EXTRA_CHARACTERS_EPSILON",
+    "role_mapping_identifier_name_with_extra_characters_zeta",
+    "audit_log_identifier_name_with_extra_characters_eta",
+    "TeamIdentifierNameWithExtraCharactersTheta",
 ];
 
 const MAP_NAMES_LONG_LOWER: &[&str] = &[
-    "this_identifier_name_is_long_enough_to_spill_out_of_line_alpha",
-    "this_identifier_name_is_long_enough_to_spill_out_of_line_beta",
-    "customeridentifiernamethatspillsoutoflinegamma",
-    "line_item_identifier_name_that_spills_out_of_line_delta",
-    "session_identifier_name_that_spills_out_of_line_epsilon",
-    "role_mapping_identifier_name_that_spills_out_of_line_zeta",
-    "audit_log_identifier_name_that_spills_out_of_line_eta",
-    "teamidentifiernamethatspillsoutoflinetheta",
+    "this_identifier_name_with_extra_characters_alpha",
+    "this_identifier_name_with_extra_characters_beta",
+    "customeridentifiernamewithextracharactersgamma",
+    "line_item_identifier_name_with_extra_characters_delta",
+    "session_identifier_name_with_extra_characters_epsilon",
+    "role_mapping_identifier_name_with_extra_characters_zeta",
+    "audit_log_identifier_name_with_extra_characters_eta",
+    "teamidentifiernamewithextracharacterstheta",
 ];
 
 fn consume_text(value: &str) {
@@ -302,8 +302,8 @@ fn naive_quoted_string(quote: Option<Quote>, value: &str) -> String {
 }
 
 fn eq_ident(
-    lhs: &IdentStr<Quote, policy::Ascii, BoxSpill>,
-    rhs: &IdentStr<Quote, policy::Ascii, BoxSpill>,
+    lhs: &IdentStr<Quote, policy::Ascii, BoxStorage>,
+    rhs: &IdentStr<Quote, policy::Ascii, BoxStorage>,
 ) -> bool {
     lhs == rhs
 }
@@ -355,8 +355,8 @@ fn cmp_ascii(lhs: &str, rhs: &str) -> Ordering {
 }
 
 fn cmp_ident(
-    lhs: &IdentStr<Quote, policy::Ascii, BoxSpill>,
-    rhs: &IdentStr<Quote, policy::Ascii, BoxSpill>,
+    lhs: &IdentStr<Quote, policy::Ascii, BoxStorage>,
+    rhs: &IdentStr<Quote, policy::Ascii, BoxStorage>,
 ) -> Ordering {
     lhs.cmp(rhs)
 }

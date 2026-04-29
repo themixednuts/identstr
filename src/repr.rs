@@ -5,7 +5,9 @@ pub(crate) const QUOTED_INLINE_CAPACITY: usize = INLINE_CAPACITY - 1;
 
 const INLINE_META_INDEX: usize = INLINE_CAPACITY - 1;
 const QUOTED_LEN_INDEX: usize = QUOTED_INLINE_CAPACITY - 1;
-const META_MARKER_INDEX: usize = std::mem::size_of::<usize>() - 1;
+const HEAP_LEN_MASK: usize = usize::MAX >> 8;
+#[cfg(target_endian = "little")]
+const HEAP_MARKER_SHIFT: u32 = usize::BITS - 8;
 const SHORT_INLINE_BASE: u8 = 0xC0;
 const QUOTED_INLINE_BASE: u8 = 0xD0;
 const HEAP_BASE: u8 = 0xE0;
@@ -55,20 +57,15 @@ impl Repr {
 
     pub(crate) fn new_heap(ptr: NonNull<u8>, len: usize, quote_tag: u8) -> Self {
         assert!(quote_tag <= Self::MAX_HEAP_QUOTE_TAG);
-
-        let mut meta = len.to_ne_bytes();
         assert!(
-            meta[META_MARKER_INDEX] == 0,
+            len <= HEAP_LEN_MASK,
             "identifier too long for packed heap representation",
         );
-        meta[META_MARKER_INDEX] = HEAP_BASE | quote_tag;
+        let meta = Self::heap_meta(len, HEAP_BASE | quote_tag);
 
         Self {
             storage: Storage {
-                heap: HeapRepr {
-                    ptr,
-                    meta: usize::from_ne_bytes(meta),
-                },
+                heap: HeapRepr { ptr, meta },
             },
         }
     }
@@ -115,7 +112,7 @@ impl Repr {
     }
 
     pub(crate) fn heap_tag(self) -> u8 {
-        self.meta_bytes()[META_MARKER_INDEX] & HEAP_QUOTE_MASK
+        self.last_byte() & HEAP_QUOTE_MASK
     }
 
     pub(crate) const fn last_byte(self) -> u8 {
@@ -129,9 +126,7 @@ impl Repr {
 
     #[inline]
     pub(crate) fn heap_len(self) -> usize {
-        let mut bytes = self.meta_bytes();
-        bytes[META_MARKER_INDEX] = 0;
-        usize::from_ne_bytes(bytes)
+        Self::len_from_heap_meta(self.heap_meta_value())
     }
 
     #[inline]
@@ -161,7 +156,40 @@ impl Repr {
         unsafe { std::slice::from_raw_parts(self.heap_ptr().as_ptr(), self.heap_len()) }
     }
 
-    fn meta_bytes(self) -> [u8; std::mem::size_of::<usize>()] {
-        unsafe { self.storage.heap.meta.to_ne_bytes() }
+    const fn heap_meta(len: usize, marker: u8) -> usize {
+        #[cfg(target_endian = "little")]
+        {
+            len | (marker as usize) << HEAP_MARKER_SHIFT
+        }
+
+        #[cfg(target_endian = "big")]
+        {
+            (len << 8) | marker as usize
+        }
+    }
+
+    const fn len_from_heap_meta(meta: usize) -> usize {
+        #[cfg(target_endian = "little")]
+        {
+            meta & HEAP_LEN_MASK
+        }
+
+        #[cfg(target_endian = "big")]
+        {
+            meta >> 8
+        }
+    }
+
+    fn heap_meta_value(self) -> usize {
+        unsafe { self.storage.heap.meta }
     }
 }
+
+// SAFETY: `Repr` only stores immutable string bytes plus packed metadata. The
+// owning `IdentStr` carries the storage owner type in `PhantomData`, so Send
+// and Sync are controlled by `S::Owned`, `Q`, `P`, and `S`.
+unsafe impl Send for Repr {}
+// SAFETY: Shared access to `Repr` can only produce shared `str` references.
+// Storage-specific mutation such as refcount updates occurs through `Storage`
+// operations on owned `IdentStr` values.
+unsafe impl Sync for Repr {}

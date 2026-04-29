@@ -69,23 +69,21 @@ pub(crate) fn to_string(value: &str, quote: Option<Quote>) -> String {
 
     let escape = quote.close_byte();
     let bytes = value.as_bytes();
-    let capacity = match find_byte(value, escape) {
+    let first_escape = find_byte(value, escape);
+    let capacity = match first_escape {
         Some(first_escape) => value.len() + 3 + count_byte_from(bytes, escape, first_escape + 1),
         None => value.len() + 2,
     };
 
     let mut rendered = String::with_capacity(capacity);
-    push_quoted(value, quote, &mut rendered);
+    match first_escape {
+        Some(first_escape) => push_escaped(value, quote, first_escape, &mut rendered),
+        None => push_unescaped(value, quote, &mut rendered),
+    }
     rendered
 }
 
-fn push_quoted(value: &str, quote: Quote, output: &mut String) {
-    let escape = quote.close_byte();
-    if let Some(first_escape) = find_byte(value, escape) {
-        push_escaped(value, quote, first_escape, output);
-        return;
-    }
-
+fn push_unescaped(value: &str, quote: Quote, output: &mut String) {
     output.push(quote.open());
     output.push_str(value);
     output.push(quote.close());

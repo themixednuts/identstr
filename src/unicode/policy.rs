@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     cmp::Ordering,
     hash::{Hash, Hasher},
 };
@@ -73,24 +72,29 @@ fn compatibility_key(value: &str) -> Box<str> {
         .into_boxed_str()
 }
 
-fn turkic_fold(value: &str) -> Cow<'_, str> {
-    TURKIC_CASE_MAPPER.fold_turkic_string(value)
+fn turkic_fold(value: &str) -> String {
+    TURKIC_CASE_MAPPER.fold_turkic_string(value).into_owned()
+}
+
+fn turkic_canonical(value: &str) -> String {
+    let normalized = value.chars().nfc().collect::<String>();
+    turkic_fold(&normalized).chars().nfd().collect()
+}
+
+fn turkic_compatibility(value: &str) -> String {
+    let normalized = value.chars().nfc().collect::<String>();
+    let folded = turkic_fold(&normalized);
+    let compatible = folded.chars().nfkd().collect::<String>();
+    let normalized = compatible.chars().nfc().collect::<String>();
+    turkic_fold(&normalized).chars().nfkd().collect()
 }
 
 fn turkic_canonical_key(value: &str) -> Box<str> {
-    turkic_fold(value)
-        .chars()
-        .nfd()
-        .collect::<String>()
-        .into_boxed_str()
+    turkic_canonical(value).into_boxed_str()
 }
 
 fn turkic_compatibility_key(value: &str) -> Box<str> {
-    turkic_fold(value)
-        .chars()
-        .nfkd()
-        .collect::<String>()
-        .into_boxed_str()
+    turkic_compatibility(value).into_boxed_str()
 }
 
 impl Policy for UnicodeNfc {
@@ -110,6 +114,10 @@ impl Policy for UnicodeNfc {
 impl KeyPolicy for UnicodeNfc {
     fn into_key(value: Box<str>) -> Box<str> {
         canonical_key(&value)
+    }
+
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        hash_chars(value.chars(), state);
     }
 }
 
@@ -131,24 +139,23 @@ impl KeyPolicy for UnicodeNfkc {
     fn into_key(value: Box<str>) -> Box<str> {
         compatibility_key(&value)
     }
+
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        hash_chars(value.chars(), state);
+    }
 }
 
 impl Policy for UnicodeTurkicNfc {
     fn eq(lhs: &str, rhs: &str) -> bool {
-        let lhs = turkic_fold(lhs);
-        let rhs = turkic_fold(rhs);
-        lhs.chars().nfd().eq(rhs.chars().nfd())
+        turkic_canonical(lhs) == turkic_canonical(rhs)
     }
 
     fn cmp(lhs: &str, rhs: &str) -> Ordering {
-        let lhs = turkic_fold(lhs);
-        let rhs = turkic_fold(rhs);
-        cmp_chars(lhs.chars().nfd(), rhs.chars().nfd())
+        turkic_canonical(lhs).cmp(&turkic_canonical(rhs))
     }
 
     fn hash<H: Hasher>(value: &str, state: &mut H) {
-        let value = turkic_fold(value);
-        hash_chars(value.chars().nfd(), state);
+        hash_chars(turkic_canonical(value).chars(), state);
     }
 }
 
@@ -156,29 +163,32 @@ impl KeyPolicy for UnicodeTurkicNfc {
     fn into_key(value: Box<str>) -> Box<str> {
         turkic_canonical_key(&value)
     }
+
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        hash_chars(value.chars(), state);
+    }
 }
 
 impl Policy for UnicodeTurkicNfkc {
     fn eq(lhs: &str, rhs: &str) -> bool {
-        let lhs = turkic_fold(lhs);
-        let rhs = turkic_fold(rhs);
-        lhs.chars().nfkd().eq(rhs.chars().nfkd())
+        turkic_compatibility(lhs) == turkic_compatibility(rhs)
     }
 
     fn cmp(lhs: &str, rhs: &str) -> Ordering {
-        let lhs = turkic_fold(lhs);
-        let rhs = turkic_fold(rhs);
-        cmp_chars(lhs.chars().nfkd(), rhs.chars().nfkd())
+        turkic_compatibility(lhs).cmp(&turkic_compatibility(rhs))
     }
 
     fn hash<H: Hasher>(value: &str, state: &mut H) {
-        let value = turkic_fold(value);
-        hash_chars(value.chars().nfkd(), state);
+        hash_chars(turkic_compatibility(value).chars(), state);
     }
 }
 
 impl KeyPolicy for UnicodeTurkicNfkc {
     fn into_key(value: Box<str>) -> Box<str> {
         turkic_compatibility_key(&value)
+    }
+
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        hash_chars(value.chars(), state);
     }
 }

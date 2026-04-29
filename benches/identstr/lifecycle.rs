@@ -1,18 +1,18 @@
 use super::*;
 
 pub(super) fn bench_clone(c: &mut Criterion) {
-    let short_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("customer_id");
-    let short_shared = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("customer_id");
+    let short_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new("customer_id");
+    let short_shared = IdentStr::<Quote, policy::Ascii, ArcStorage>::new("customer_id");
     let short_box = NaiveBoxIdent::new("customer_id", Some(Quote::Double));
     let short_arc = NaiveArcIdent::new("customer_id", Some(Quote::Double));
     let short_rc = NaiveRcIdent::new("customer_id", Some(Quote::Double));
     let short_compact = NaiveCompactIdent::new("customer_id", Some(Quote::Double));
     let short_uncased = NaiveUncasedIdent::new("customer_id", Some(Quote::Double));
 
-    let long_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+    let long_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
-    let long_shared = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+    let long_shared = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
     let long_box = NaiveBoxIdent::new(
@@ -120,13 +120,13 @@ pub(super) fn bench_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("into_boxed_str");
     group.bench_function("identstr_inline_box", |b| {
         b.iter(|| {
-            let ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(short);
+            let ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(short);
             black_box(Box::<str>::from(ident));
         });
     });
     group.bench_function("identstr_spill_box", |b| {
         b.iter(|| {
-            let ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(long);
+            let ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(long);
             black_box(Box::<str>::from(ident));
         });
     });
@@ -135,13 +135,13 @@ pub(super) fn bench_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("into_arc_str");
     group.bench_function("identstr_inline_arc", |b| {
         b.iter(|| {
-            let ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(short);
+            let ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(short);
             black_box(Arc::<str>::from(ident));
         });
     });
     group.bench_function("identstr_spill_arc", |b| {
         b.iter(|| {
-            let ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(long);
+            let ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(long);
             black_box(Arc::<str>::from(ident));
         });
     });

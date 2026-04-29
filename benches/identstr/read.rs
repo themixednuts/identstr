@@ -1,8 +1,8 @@
 use super::*;
 
 fn bench_read_text(c: &mut Criterion) {
-    let short_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("customer_id");
-    let short_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("customer_id");
+    let short_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new("customer_id");
+    let short_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new("customer_id");
     let short_box = NaiveBoxIdent::new("customer_id", None);
     let short_arc = NaiveArcIdent::new("customer_id", None);
     let short_rc = NaiveRcIdent::new("customer_id", None);
@@ -47,10 +47,10 @@ fn bench_read_text(c: &mut Criterion) {
     });
     group.finish();
 
-    let long_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+    let long_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
-    let long_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+    let long_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
     let long_box = NaiveBoxIdent::new(
@@ -115,9 +115,9 @@ fn bench_read_text(c: &mut Criterion) {
 
 fn bench_read_quoted_parts(c: &mut Criterion) {
     let quoted_ident =
-        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("Users", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("Users", Quote::Bracket);
     let quoted_arc_ident =
-        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("Users", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote("Users", Quote::Bracket);
     let quoted_box = NaiveBoxIdent::new("Users", Some(Quote::Bracket));
     let quoted_arc = NaiveArcIdent::new("Users", Some(Quote::Bracket));
     let quoted_rc = NaiveRcIdent::new("Users", Some(Quote::Bracket));
@@ -172,9 +172,9 @@ fn bench_read_quoted_parts(c: &mut Criterion) {
 
 fn bench_read_key(c: &mut Criterion) {
     let quoted_ident =
-        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("Users", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("Users", Quote::Bracket);
     let quoted_arc_ident =
-        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("Users", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote("Users", Quote::Bracket);
     let quoted_box = NaiveBoxIdent::new("Users", Some(Quote::Bracket));
     let quoted_arc = NaiveArcIdent::new("Users", Some(Quote::Bracket));
     let quoted_rc = NaiveRcIdent::new("Users", Some(Quote::Bracket));
@@ -220,8 +220,8 @@ fn bench_read_key(c: &mut Criterion) {
     group.finish();
 
     let upper_long = "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE";
-    let key_long_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(upper_long);
-    let key_long_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(upper_long);
+    let key_long_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(upper_long);
+    let key_long_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(upper_long);
     let key_long_box = NaiveBoxIdent::new(upper_long, None);
     let key_long_arc = NaiveArcIdent::new(upper_long, None);
     let key_long_rc = NaiveRcIdent::new(upper_long, None);
@@ -274,18 +274,18 @@ pub(super) fn bench_read(c: &mut Criterion) {
 }
 
 pub(super) fn bench_render_quoted(c: &mut Criterion) {
-    let unquoted_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("Users");
-    let unquoted_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("Users");
+    let unquoted_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new("Users");
+    let unquoted_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new("Users");
     let unquoted_naive = NaiveBoxIdent::new("Users", None);
     let quoted_ident =
-        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("User\"Table", Quote::Double);
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("User\"Table", Quote::Double);
     let quoted_arc_ident =
-        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("User\"Table", Quote::Double);
+        IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote("User\"Table", Quote::Double);
     let quoted_naive = NaiveBoxIdent::new("User\"Table", Some(Quote::Double));
     let bracket_ident =
-        IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("User]Table", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("User]Table", Quote::Bracket);
     let bracket_arc_ident =
-        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("User]Table", Quote::Bracket);
+        IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote("User]Table", Quote::Bracket);
     let bracket_naive = NaiveBoxIdent::new("User]Table", Some(Quote::Bracket));
 
     let mut group = c.benchmark_group("render_quoted_write");

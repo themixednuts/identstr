@@ -8,21 +8,21 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
     group.bench_function("identstr_box", |b| {
         b.iter_batched(
             || Box::<str>::from(short),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_arc", |b| {
         b.iter_batched(
             || Arc::<str>::from(short),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, ArcStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_rc", |b| {
         b.iter_batched(
             || Rc::<str>::from(short),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, RcSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, RcStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
@@ -54,7 +54,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Box::<str>::from(short),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -66,7 +66,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Arc::<str>::from(short),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -78,7 +78,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Rc::<str>::from(short),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, RcSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, RcStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -113,21 +113,21 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
     group.bench_function("identstr_box", |b| {
         b.iter_batched(
             || Box::<str>::from(long),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_arc", |b| {
         b.iter_batched(
             || Arc::<str>::from(long),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, ArcStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_rc", |b| {
         b.iter_batched(
             || Rc::<str>::from(long),
-            |value| black_box(IdentStr::<Quote, policy::Ascii, RcSpill>::new(value)),
+            |value| black_box(IdentStr::<Quote, policy::Ascii, RcStorage>::new(value)),
             BatchSize::SmallInput,
         );
     });
@@ -159,7 +159,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Box::<str>::from(long),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -171,7 +171,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Arc::<str>::from(long),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -183,7 +183,7 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
         b.iter_batched(
             || Rc::<str>::from(long),
             |value| {
-                black_box(IdentStr::<Quote, policy::Ascii, RcSpill>::with_quote(
+                black_box(IdentStr::<Quote, policy::Ascii, RcStorage>::with_quote(
                     value,
                     Quote::Double,
                 ))
@@ -216,9 +216,10 @@ pub(super) fn bench_owned_backend_input(c: &mut Criterion) {
 }
 
 pub(super) fn bench_mixed_backend_eq(c: &mut Criterion) {
-    let lhs_short = IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("Users", Quote::Double);
-    let rhs_short_arc = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("users");
-    let rhs_short_rc = IdentStr::<Quote, policy::Ascii, RcSpill>::new("users");
+    let lhs_short =
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("Users", Quote::Double);
+    let rhs_short_arc = IdentStr::<Quote, policy::Ascii, ArcStorage>::new("users");
+    let rhs_short_rc = IdentStr::<Quote, policy::Ascii, RcStorage>::new("users");
 
     let mut group = c.benchmark_group("eq_mixed_backend_short");
     group.bench_function("box_arc", |b| {
@@ -233,13 +234,13 @@ pub(super) fn bench_mixed_backend_eq(c: &mut Criterion) {
     });
     group.finish();
 
-    let lhs_long = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+    let lhs_long = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
-    let rhs_long_arc = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+    let rhs_long_arc = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(
         "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
     );
-    let rhs_long_rc = IdentStr::<Quote, policy::Ascii, RcSpill>::new(
+    let rhs_long_rc = IdentStr::<Quote, policy::Ascii, RcStorage>::new(
         "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
     );
 
@@ -264,14 +265,14 @@ pub(super) fn bench_drop(c: &mut Criterion) {
     let mut group = c.benchmark_group("drop_short");
     group.bench_function("identstr_box", |b| {
         b.iter_batched(
-            || IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote(short, Quote::Double),
+            || IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote(short, Quote::Double),
             drop,
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_arc", |b| {
         b.iter_batched(
-            || IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote(short, Quote::Double),
+            || IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote(short, Quote::Double),
             drop,
             BatchSize::SmallInput,
         );
@@ -316,14 +317,14 @@ pub(super) fn bench_drop(c: &mut Criterion) {
     let mut group = c.benchmark_group("drop_long");
     group.bench_function("identstr_box", |b| {
         b.iter_batched(
-            || IdentStr::<Quote, policy::Ascii, BoxSpill>::new(long),
+            || IdentStr::<Quote, policy::Ascii, BoxStorage>::new(long),
             drop,
             BatchSize::SmallInput,
         );
     });
     group.bench_function("identstr_arc", |b| {
         b.iter_batched(
-            || IdentStr::<Quote, policy::Ascii, ArcSpill>::new(long),
+            || IdentStr::<Quote, policy::Ascii, ArcStorage>::new(long),
             drop,
             BatchSize::SmallInput,
         );

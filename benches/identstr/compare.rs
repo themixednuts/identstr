@@ -1,11 +1,12 @@
 use super::*;
 
 fn bench_compare_short(c: &mut Criterion) {
-    let lhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::with_quote("Users", Quote::Double);
-    let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new("users");
+    let lhs_ident =
+        IdentStr::<Quote, policy::Ascii, BoxStorage>::with_quote("Users", Quote::Double);
+    let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new("users");
     let lhs_arc_ident =
-        IdentStr::<Quote, policy::Ascii, ArcSpill>::with_quote("Users", Quote::Double);
-    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new("users");
+        IdentStr::<Quote, policy::Ascii, ArcStorage>::with_quote("Users", Quote::Double);
+    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new("users");
     let lhs_box = NaiveBoxIdent::new("Users", Some(Quote::Double));
     let rhs_box = NaiveBoxIdent::new("users", None);
     let lhs_arc = NaiveArcIdent::new("Users", Some(Quote::Double));
@@ -107,16 +108,16 @@ fn bench_compare_short(c: &mut Criterion) {
 }
 
 fn bench_compare_long(c: &mut Criterion) {
-    let lhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+    let lhs_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
-    let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(
+    let rhs_ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(
         "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
     );
-    let lhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+    let lhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(
         "this_identifier_name_is_long_enough_to_spill_out_of_line",
     );
-    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(
+    let rhs_arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(
         "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
     );
     let lhs_box = NaiveBoxIdent::new(
@@ -300,8 +301,8 @@ pub(super) fn bench_hash(c: &mut Criterion) {
             "THIS_IDENTIFIER_NAME_IS_LONG_ENOUGH_TO_SPILL_OUT_OF_LINE",
         ),
     ] {
-        let ident = IdentStr::<Quote, policy::Ascii, BoxSpill>::new(value);
-        let arc_ident = IdentStr::<Quote, policy::Ascii, ArcSpill>::new(value);
+        let ident = IdentStr::<Quote, policy::Ascii, BoxStorage>::new(value);
+        let arc_ident = IdentStr::<Quote, policy::Ascii, ArcStorage>::new(value);
         let naive_box = NaiveBoxIdent::new(value, None);
         let naive_arc = NaiveArcIdent::new(value, None);
         let naive_rc = NaiveRcIdent::new(value, None);

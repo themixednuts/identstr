@@ -7,7 +7,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             let mut map = HashMap::with_capacity(MAP_NAMES_SHORT.len());
             for (index, name) in MAP_NAMES_SHORT.iter().enumerate() {
                 map.insert(
-                    IdentStr::<Quote, policy::Ascii, BoxSpill>::new(*name),
+                    IdentStr::<Quote, policy::Ascii, BoxStorage>::new(*name),
                     index,
                 );
             }
@@ -19,14 +19,14 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             let mut map = HashMap::with_capacity(MAP_NAMES_SHORT.len());
             for (index, name) in MAP_NAMES_SHORT.iter().enumerate() {
                 map.insert(
-                    IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                    IdentStr::<Quote, policy::Ascii, ArcStorage>::new(*name),
                     index,
                 );
             }
             black_box(map);
         });
     });
-    group.bench_function("key", |b| {
+    group.bench_function("Key", |b| {
         b.iter(|| {
             let mut map = HashMap::with_capacity(MAP_NAMES_SHORT.len());
             for (index, name) in MAP_NAMES_SHORT.iter().enumerate() {
@@ -88,7 +88,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             let mut map = HashMap::with_capacity(MAP_NAMES_LONG.len());
             for (index, name) in MAP_NAMES_LONG.iter().enumerate() {
                 map.insert(
-                    IdentStr::<Quote, policy::Ascii, BoxSpill>::new(*name),
+                    IdentStr::<Quote, policy::Ascii, BoxStorage>::new(*name),
                     index,
                 );
             }
@@ -100,14 +100,14 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             let mut map = HashMap::with_capacity(MAP_NAMES_LONG.len());
             for (index, name) in MAP_NAMES_LONG.iter().enumerate() {
                 map.insert(
-                    IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                    IdentStr::<Quote, policy::Ascii, ArcStorage>::new(*name),
                     index,
                 );
             }
             black_box(map);
         });
     });
-    group.bench_function("key", |b| {
+    group.bench_function("Key", |b| {
         b.iter(|| {
             let mut map = HashMap::with_capacity(MAP_NAMES_LONG.len());
             for (index, name) in MAP_NAMES_LONG.iter().enumerate() {
@@ -173,7 +173,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| {
             (
-                IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                IdentStr::<Quote, policy::Ascii, ArcStorage>::new(*name),
                 index,
             )
         })
@@ -188,8 +188,8 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| {
             let ident = IdentStr::new(*name);
-            let key = ident.to_key();
-            (key, (ident, index))
+            let lookup_key = ident.to_key();
+            (lookup_key, (ident, index))
         })
         .collect();
     let naive_box_short_map: HashMap<Box<str>, usize> = MAP_NAMES_SHORT
@@ -234,7 +234,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .collect();
     let identstr_short_arc_queries: Vec<AsciiArcIdent> = MAP_NAMES_SHORT
         .iter()
-        .map(|name| IdentStr::<Quote, policy::Ascii, ArcSpill>::new(name.to_ascii_lowercase()))
+        .map(|name| IdentStr::<Quote, policy::Ascii, ArcStorage>::new(name.to_ascii_lowercase()))
         .collect();
     let key_short_queries: Vec<AsciiKey> = MAP_NAMES_SHORT
         .iter()
@@ -288,7 +288,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             black_box(sum);
         });
     });
-    group.bench_function("key", |b| {
+    group.bench_function("Key", |b| {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &key_short_queries {
@@ -441,9 +441,9 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_short_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 sum += key_short_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
             }
@@ -454,9 +454,9 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_short_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 let (stored_ident, value) = key_short_entry_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .expect("short entry present");
                 black_box(stored_ident);
                 sum += *value;
@@ -468,13 +468,13 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_short_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 sum += key_short_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
-                    key.as_str(),
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                    lookup_key.as_str(),
                 ));
             }
             black_box(sum);
@@ -513,7 +513,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
                     query.as_str(),
                 ));
             }
@@ -608,7 +608,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| {
             (
-                IdentStr::<Quote, policy::Ascii, ArcSpill>::new(*name),
+                IdentStr::<Quote, policy::Ascii, ArcStorage>::new(*name),
                 index,
             )
         })
@@ -623,8 +623,8 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .enumerate()
         .map(|(index, name)| {
             let ident = IdentStr::new(*name);
-            let key = ident.to_key();
-            (key, (ident, index))
+            let lookup_key = ident.to_key();
+            (lookup_key, (ident, index))
         })
         .collect();
     let naive_box_long_map: HashMap<Box<str>, usize> = MAP_NAMES_LONG
@@ -669,7 +669,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         .collect();
     let identstr_long_arc_queries: Vec<AsciiArcIdent> = MAP_NAMES_LONG
         .iter()
-        .map(|name| IdentStr::<Quote, policy::Ascii, ArcSpill>::new(name.to_ascii_lowercase()))
+        .map(|name| IdentStr::<Quote, policy::Ascii, ArcStorage>::new(name.to_ascii_lowercase()))
         .collect();
     let key_long_queries: Vec<Key<policy::Ascii>> = MAP_NAMES_LONG
         .iter()
@@ -723,7 +723,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             black_box(sum);
         });
     });
-    group.bench_function("key", |b| {
+    group.bench_function("Key", |b| {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &key_long_queries {
@@ -876,9 +876,9 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_long_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 sum += key_long_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
             }
@@ -889,9 +889,9 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_long_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 let (stored_ident, value) = key_long_entry_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .expect("long entry present");
                 black_box(stored_ident);
                 sum += *value;
@@ -903,13 +903,13 @@ pub(super) fn bench_maps(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0usize;
             for query in &identstr_long_queries {
-                let key = black_box(query).to_key();
+                let lookup_key = black_box(query).to_key();
                 sum += key_long_map
-                    .get(black_box(&key))
+                    .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
-                    key.as_str(),
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                    lookup_key.as_str(),
                 ));
             }
             black_box(sum);
@@ -948,7 +948,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxSpill>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
                     query.as_str(),
                 ));
             }

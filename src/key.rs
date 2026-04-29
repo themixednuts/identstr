@@ -18,10 +18,12 @@ use crate::{
 
 /// Owned lookup key for identifier text.
 ///
-/// Most code can use [`crate::IdentStr`] directly.
+/// [`crate::IdentStr`] can be used as a map key when you want to keep the
+/// original spelling and quote style. Use `Key` for maps that only need
+/// normalized lookup text.
 ///
-/// Use `Key` when you store lookup keys separately from the original
-/// identifier text.
+/// Queries should be converted with [`Key::new`] before lookup so quote
+/// parsing and policy normalization are applied consistently.
 pub struct Key<P: KeyPolicy = policy::Ascii> {
     value: Box<str>,
     marker: PhantomData<P>,
@@ -137,7 +139,7 @@ impl<P: KeyPolicy> PartialEq for Key<P> {
     }
 }
 
-impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Spill> PartialEq<crate::IdentStr<Q, P, S>>
+impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Storage> PartialEq<crate::IdentStr<Q, P, S>>
     for Key<P>
 {
     fn eq(&self, other: &crate::IdentStr<Q, P, S>) -> bool {
@@ -161,7 +163,7 @@ impl<P: KeyPolicy> Ord for Key<P> {
 
 impl<P: KeyPolicy> Hash for Key<P> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.value.hash(state);
+        P::hash_key(self.as_str(), state);
     }
 }
 
@@ -192,7 +194,9 @@ impl<P: KeyPolicy> From<Box<str>> for Key<P> {
     }
 }
 
-impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Spill> From<&crate::IdentStr<Q, P, S>> for Key<P> {
+impl<P: KeyPolicy, Q: crate::QuoteTag, S: crate::Storage> From<&crate::IdentStr<Q, P, S>>
+    for Key<P>
+{
     fn from(value: &crate::IdentStr<Q, P, S>) -> Self {
         Self::from_raw(value.as_str())
     }

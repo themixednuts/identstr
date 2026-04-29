@@ -11,13 +11,13 @@ pub enum Quote {
 }
 
 impl Quote {
-    /// Returns the stored tag for this quote style.
+    /// Returns the code used to preserve this quote style.
     #[must_use]
     pub const fn tag(self) -> u8 {
         self as u8
     }
 
-    /// Converts a stored quote tag into a [`Quote`] value.
+    /// Converts a preserved quote code into a [`Quote`] value.
     #[must_use]
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
