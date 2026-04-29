@@ -45,10 +45,6 @@ pub use input::Input;
 pub use key::Key;
 pub use quote::Quote;
 pub use storage::{ArcStorage, BoxStorage, RcStorage, Storage};
-#[doc(hidden)]
-pub use storage::{
-    ArcStorage as ArcSpill, BoxStorage as BoxSpill, RcStorage as RcSpill, Storage as Spill,
-};
 
 use policy::{KeyPolicy, Policy};
 use repr::{INLINE_CAPACITY, QUOTED_INLINE_CAPACITY, Repr};
