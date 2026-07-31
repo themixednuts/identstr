@@ -113,6 +113,20 @@ impl Repr {
         unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
     }
 
+    /// Returns the raw inline bytes when this repr is inline.
+    ///
+    /// Inline byte arrays are canonical for a given text and quote tag:
+    /// unused positions are always zero, so two inline reprs are equal
+    /// exactly when their stored text and tag are equal.
+    #[inline]
+    pub(crate) fn inline_array(self) -> Option<[u8; INLINE_CAPACITY]> {
+        if self.is_inline() {
+            Some(unsafe { self.storage.inline.bytes })
+        } else {
+            None
+        }
+    }
+
     #[inline]
     pub(crate) fn quote_tag(self) -> u8 {
         let last = self.last_byte();

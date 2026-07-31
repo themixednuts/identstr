@@ -1750,6 +1750,27 @@ mod tests {
     }
 
     #[test]
+    fn key_equality_holds_across_storage_representations() {
+        let inline = Key::<policy::Ascii>::new("users");
+        let boxed = Key::<policy::Ascii>::from(Box::<str>::from("users"));
+
+        assert!(inline.is_inline());
+        assert!(!boxed.is_inline());
+        assert_eq!(inline, boxed);
+        assert_eq!(boxed, inline);
+        assert_eq!(hash_value(&inline), hash_value(&boxed));
+    }
+
+    #[test]
+    fn short_lowercase_key_from_box_reuses_allocation() {
+        let value = Box::<str>::from("users");
+        let ptr = value.as_ptr();
+        let key = Key::<policy::Ascii>::from(value);
+        let value: Box<str> = key.into();
+        assert_eq!(ptr, value.as_ptr());
+    }
+
+    #[test]
     fn long_lowercase_ascii_key_reuses_owned_box() {
         let value = Box::<str>::from("this_identifier_name_is_long_enough_to_spill");
         let ptr = value.as_ptr();

@@ -140,23 +140,51 @@ fn cmp_ascii(lhs: &str, rhs: &str) -> Ordering {
     lhs.bytes().map(fold_ascii).cmp(rhs.bytes().map(fold_ascii))
 }
 
+// Every branch below feeds the hasher a length prefix followed by
+// `ASCII_HASH_CHUNK_LEN`-sized writes, so policy-equal text hashes the same
+// under chunk-sensitive hashers regardless of case content.
 #[inline]
 fn hash_ascii<H: Hasher>(value: &str, state: &mut H) {
     let bytes = value.as_bytes();
     bytes.len().hash(state);
 
-    // Both branches feed the hasher identically chunked writes so that
-    // policy-equal text hashes the same under chunk-sensitive hashers.
-    let mut scratch = [0_u8; ASCII_HASH_CHUNK_LEN];
+    if bytes.len() <= ASCII_HASH_CHUNK_LEN {
+        hash_ascii_chunk(bytes, state);
+        return;
+    }
+
     for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
-        if chunk.iter().any(u8::is_ascii_uppercase) {
-            let folded = &mut scratch[..chunk.len()];
-            folded.copy_from_slice(chunk);
-            folded.make_ascii_lowercase();
-            state.write(folded);
-        } else {
-            state.write(chunk);
-        }
+        hash_ascii_chunk(chunk, state);
+    }
+}
+
+#[inline]
+fn hash_ascii_chunk<H: Hasher>(chunk: &[u8], state: &mut H) {
+    if chunk.iter().any(u8::is_ascii_uppercase) {
+        let mut scratch = [0_u8; ASCII_HASH_CHUNK_LEN];
+        let folded = &mut scratch[..chunk.len()];
+        folded.copy_from_slice(chunk);
+        folded.make_ascii_lowercase();
+        state.write(folded);
+    } else {
+        state.write(chunk);
+    }
+}
+
+// Lookup text is already folded, so skip the case scan but keep the same
+// write pattern as `hash_ascii`.
+#[inline]
+fn hash_ascii_key<H: Hasher>(value: &str, state: &mut H) {
+    let bytes = value.as_bytes();
+    bytes.len().hash(state);
+
+    if bytes.len() <= ASCII_HASH_CHUNK_LEN {
+        state.write(bytes);
+        return;
+    }
+
+    for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
+        state.write(chunk);
     }
 }
 
@@ -181,6 +209,11 @@ impl KeyPolicy for Ascii {
     #[inline]
     fn into_key(value: Box<str>) -> Box<str> {
         ascii_key(value)
+    }
+
+    #[inline]
+    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+        hash_ascii_key(value, state);
     }
 
     #[inline]

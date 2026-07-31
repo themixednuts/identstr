@@ -171,11 +171,10 @@ impl<P: KeyPolicy> Key<P> {
         }
     }
 
+    // Keeps the existing allocation rather than paying a copy to inline it;
+    // only `from_unquoted` builds inline keys, where doing so avoids the
+    // allocation entirely.
     fn from_box(value: Box<str>) -> Self {
-        if value.len() <= INLINE_CAPACITY {
-            return Self::from_repr(Repr::inline_from(&value, None));
-        }
-
         Self::from_repr(BoxStorage::into_repr(value, 0))
     }
 
@@ -350,6 +349,12 @@ impl<P: KeyPolicy> Default for Key<P> {
 
 impl<P: KeyPolicy> PartialEq for Key<P> {
     fn eq(&self, other: &Self) -> bool {
+        // Inline reprs are canonical, so two inline keys can be compared as
+        // raw bytes without decoding their lengths.
+        if let (Some(lhs), Some(rhs)) = (self.repr.inline_array(), other.repr.inline_array()) {
+            return lhs == rhs;
+        }
+
         self.as_str() == other.as_str()
     }
 }
