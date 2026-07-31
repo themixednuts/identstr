@@ -473,7 +473,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_unquoted(
                     lookup_key.as_str(),
                 ));
             }
@@ -513,7 +513,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_unquoted(
                     query.as_str(),
                 ));
             }
@@ -908,7 +908,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(&lookup_key))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_unquoted(
                     lookup_key.as_str(),
                 ));
             }
@@ -948,7 +948,7 @@ pub(super) fn bench_maps(c: &mut Criterion) {
                     .get(black_box(query))
                     .copied()
                     .unwrap_or_default();
-                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_raw(
+                black_box(IdentStr::<Quote, policy::Ascii, BoxStorage>::from_unquoted(
                     query.as_str(),
                 ));
             }

@@ -37,12 +37,26 @@ jobs:
             args: ""
           - name: unicode
             args: "--features unicode"
+          - name: all
+            args: "--all-features"
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
       - run: cargo test ${{ matrix.features.args }}
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: miri
+          cache: true
+      - run: cargo +nightly miri test
 
   bench:
     name: bench

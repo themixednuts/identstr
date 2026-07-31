@@ -5,14 +5,36 @@
 //! case-insensitive by default.
 //!
 //! Use [`IdentStr::new`] for source text that may be quoted. Use
-//! [`IdentStr::from_raw`] when the input is already identifier text.
+//! [`IdentStr::from_unquoted`] when the input is already identifier text.
+//!
+//! ```rust
+//! use identstr::{IdentStr, Quote};
+//!
+//! let name: IdentStr = IdentStr::new("\"Users\"");
+//!
+//! assert_eq!(name.as_str(), "Users");
+//! assert_eq!(name.quote(), Some(Quote::Double));
+//! assert_eq!(name, "users");
+//! assert_eq!(name.to_quoted_string(), "\"Users\"");
+//! ```
 //!
 //! [`Key`] stores normalized lookup text for maps that do not need to retain
-//! the original spelling or quote style.
+//! the original spelling or quote style, and [`KeyStr`] wraps borrowed query
+//! text for allocation-free lookups.
 //!
 //! [`Quote`] with [`policy::Ascii`] covers common quoted identifier input.
-//! Enable the `unicode` feature for Unicode matching modes and security
-//! helpers.
+//! [`policy::Exact`] compares case-sensitively.
+//!
+//! # Cargo features
+//!
+//! - `unicode`: Unicode matching modes and security helpers.
+//! - `unicode-turkic`: Turkic-aware matching modes; pulls in ICU
+//!   case-mapping data.
+//! - `serde`: `Serialize` and `Deserialize` for [`IdentStr`] and [`Key`].
+//!   [`IdentStr`] serializes as its quoted source form and [`Key`] as its
+//!   lookup text.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod key;
 pub mod policy;
@@ -26,6 +48,8 @@ mod parse;
 mod quote;
 mod render;
 mod repr;
+#[cfg(feature = "serde")]
+mod serde_impls;
 mod storage;
 
 use std::{
@@ -35,6 +59,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    num::NonZeroU8,
     ops::Deref,
     rc::Rc,
     str::FromStr,
@@ -42,55 +67,68 @@ use std::{
 };
 
 pub use input::Input;
-pub use key::Key;
-pub use quote::Quote;
+pub use key::{Key, KeyStr};
+pub use quote::{InvalidQuote, Quote};
 pub use storage::{ArcStorage, BoxStorage, RcStorage, Storage};
 
 use policy::{KeyPolicy, Policy};
 use repr::{INLINE_CAPACITY, QUOTED_INLINE_CAPACITY, Repr};
 
-const INLINE_LEN_U8: [u8; INLINE_CAPACITY + 1] = [
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    #[cfg(target_pointer_width = "64")]
-    9,
-    #[cfg(target_pointer_width = "64")]
-    10,
-    #[cfg(target_pointer_width = "64")]
-    11,
-    #[cfg(target_pointer_width = "64")]
-    12,
-    #[cfg(target_pointer_width = "64")]
-    13,
-    #[cfg(target_pointer_width = "64")]
-    14,
-    #[cfg(target_pointer_width = "64")]
-    15,
-    #[cfg(target_pointer_width = "64")]
-    16,
-];
-
 /// Quote syntax used by [`IdentStr`].
 ///
 /// [`Quote`] covers common single-byte delimiters. Implement this trait when
 /// your input format uses different delimiter pairs.
-pub trait QuoteTag: Copy + Eq + 'static {
-    /// Returns a stable nonzero code for this quote style.
-    ///
-    /// Codes `1..=31` are valid. Code `0` is reserved for unquoted text.
-    fn encode(self) -> u8;
+///
+/// Tag codes `1..=31` are valid. Identifiers with tags `1..=15` can be
+/// stored inline; tags `16..=31` always spill to the heap. Codes above `31`
+/// panic during construction.
+///
+/// ```rust
+/// use std::num::NonZeroU8;
+///
+/// use identstr::{IdentStr, QuoteStyle};
+///
+/// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// struct Angle;
+///
+/// impl QuoteStyle for Angle {
+///     fn tag(self) -> NonZeroU8 {
+///         NonZeroU8::MIN
+///     }
+///
+///     fn from_tag(tag: NonZeroU8) -> Option<Self> {
+///         (tag == NonZeroU8::MIN).then_some(Self)
+///     }
+///
+///     fn open_byte(self) -> u8 {
+///         b'<'
+///     }
+///
+///     fn close_byte(self) -> u8 {
+///         b'>'
+///     }
+///
+///     fn split_source(value: &str) -> Option<(Self, &str)> {
+///         let inner = value.strip_prefix('<')?.strip_suffix('>')?;
+///         Some((Self, inner))
+///     }
+/// }
+///
+/// let name: IdentStr<Angle> = IdentStr::new("<Config>");
+///
+/// assert_eq!(name.as_str(), "Config");
+/// assert_eq!(name.to_quoted_string(), "<Config>");
+/// ```
+pub trait QuoteStyle: Copy + Eq + 'static {
+    /// Returns a stable code for this quote style.
+    #[must_use]
+    fn tag(self) -> NonZeroU8;
 
-    /// Restores a quote style from [`encode`](Self::encode).
+    /// Restores a quote style from [`tag`](Self::tag).
     ///
     /// Return `None` for unknown codes.
-    fn decode(code: u8) -> Option<Self>;
+    #[must_use]
+    fn from_tag(tag: NonZeroU8) -> Option<Self>;
 
     /// Returns the ASCII opening delimiter.
     #[must_use]
@@ -116,18 +154,28 @@ pub trait QuoteTag: Copy + Eq + 'static {
 /// Equality, ordering, and hashing follow the configured identifier policy `P`.
 /// The quote style is available separately via [`IdentStr::quote`] and does not
 /// participate in those traits.
-pub struct IdentStr<Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
+///
+/// ```rust
+/// use identstr::IdentStr;
+///
+/// let stored: IdentStr = IdentStr::new("\"CustomerId\"");
+/// let query: IdentStr = IdentStr::new("customerid");
+///
+/// assert_eq!(stored, query);
+/// assert_eq!(stored.to_quoted_string(), "\"CustomerId\"");
+/// ```
+pub struct IdentStr<Q: QuoteStyle = Quote, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
     repr: Repr,
     marker: PhantomData<(Q, P, S, S::Owned)>,
 }
 
 /// Display adapter for rendering an identifier with its preserved quotes.
 #[derive(Clone, Copy)]
-pub struct Quoted<'a, Q: QuoteTag = Quote, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
+pub struct Quoted<'a, Q: QuoteStyle = Quote, P: Policy = policy::Ascii, S: Storage = BoxStorage> {
     ident: &'a IdentStr<Q, P, S>,
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> IdentStr<Q, P, S> {
     /// Maximum byte length accepted by [`new_inline`](Self::new_inline).
     pub const INLINE_CAPACITY: usize = INLINE_CAPACITY;
 
@@ -140,6 +188,17 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     /// quotes are removed and doubled closing delimiters are unescaped.
     /// Otherwise, including malformed quoted text, the input is stored as
     /// unquoted identifier text.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let quoted: IdentStr = IdentStr::new("\"User\"\"Table\"");
+    /// let plain: IdentStr = IdentStr::new("Users");
+    ///
+    /// assert_eq!(quoted.as_str(), "User\"Table");
+    /// assert_eq!(quoted.quote(), Some(Quote::Double));
+    /// assert_eq!(plain.quote(), None);
+    /// ```
     #[must_use]
     #[inline]
     pub fn new(value: impl Input<S>) -> Self {
@@ -158,6 +217,18 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     ///
     /// Unquoted input is stored as raw identifier text and does not call
     /// `parser`.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let ident: IdentStr = IdentStr::try_new_with("\"User\\\"Table\"", |_, inner| {
+    ///     Ok::<_, ()>(inner.replace("\\\"", "\""))
+    /// })
+    /// .expect("inner text parses");
+    ///
+    /// assert_eq!(ident.as_str(), "User\"Table");
+    /// assert_eq!(ident.quote(), Some(Quote::Double));
+    /// ```
     ///
     /// # Errors
     ///
@@ -185,16 +256,34 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     ///
     /// This stores the input as identifier text and does not parse quote
     /// delimiters.
+    ///
+    /// ```rust
+    /// use identstr::IdentStr;
+    ///
+    /// let raw: IdentStr = IdentStr::from_unquoted("\"Users\"");
+    ///
+    /// assert_eq!(raw.as_str(), "\"Users\"");
+    /// assert_eq!(raw.quote(), None);
+    /// ```
     #[must_use]
     #[inline]
-    pub fn from_raw(value: impl Input<S>) -> Self {
-        value.into_raw::<Q, P>(None)
+    pub fn from_unquoted(value: impl Input<S>) -> Self {
+        value.into_unquoted::<Q, P>(None)
     }
 
     /// Creates an identifier from already-unquoted text with quote style.
     ///
     /// `quote` may be a quote style or any value that can be converted into
     /// one, such as an opening delimiter character for [`Quote`].
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let name: IdentStr = IdentStr::with_quote("Users", '"');
+    ///
+    /// assert_eq!(name.as_str(), "Users");
+    /// assert_eq!(name.quote(), Some(Quote::Double));
+    /// ```
     ///
     /// # Panics
     ///
@@ -213,6 +302,16 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
 
     /// Creates an identifier from already-unquoted text with quote style.
     ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let valid: Result<IdentStr, _> = IdentStr::try_with_quote("Users", '"');
+    /// let invalid: Result<IdentStr, _> = IdentStr::try_with_quote("Users", '!');
+    ///
+    /// assert_eq!(valid.expect("known delimiter").quote(), Some(Quote::Double));
+    /// assert!(invalid.is_err());
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns the conversion error when `quote` cannot be converted into `Q`.
@@ -222,10 +321,18 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
         I: TryInto<Q>,
     {
         let quote = quote.try_into()?;
-        Ok(value.into_raw::<Q, P>(Some(quote)))
+        Ok(value.into_unquoted::<Q, P>(Some(quote)))
     }
 
     /// Returns the stored identifier text without surrounding quotes.
+    ///
+    /// ```rust
+    /// use identstr::IdentStr;
+    ///
+    /// let name: IdentStr = IdentStr::new("`line_items`");
+    ///
+    /// assert_eq!(name.as_str(), "line_items");
+    /// ```
     #[must_use]
     #[inline]
     pub fn as_str(&self) -> &str {
@@ -240,13 +347,20 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     }
 
     /// Returns the preserved quote delimiter, if the identifier was quoted.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let quoted: IdentStr = IdentStr::new("[Orders]");
+    /// let plain: IdentStr = IdentStr::new("orders");
+    ///
+    /// assert_eq!(quoted.quote(), Some(Quote::Bracket));
+    /// assert_eq!(plain.quote(), None);
+    /// ```
     #[must_use]
     #[inline]
     pub fn quote(&self) -> Option<Q> {
-        match self.repr.quote_tag() {
-            0 => None,
-            tag => Q::decode(tag),
-        }
+        NonZeroU8::new(self.repr.quote_tag()).and_then(Q::from_tag)
     }
 
     /// Returns `true` when the text is held without an allocation.
@@ -259,7 +373,7 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     #[must_use]
     pub const fn empty() -> Self {
         Self {
-            repr: Repr::new_inline(Self::inline_bytes("", None)),
+            repr: Repr::inline_from("", None),
             marker: PhantomData,
         }
     }
@@ -268,6 +382,14 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     ///
     /// This is available in const contexts and returns `None` when `value`
     /// is too long to store without allocating.
+    ///
+    /// ```rust
+    /// use identstr::IdentStr;
+    ///
+    /// const NAME: Option<IdentStr> = IdentStr::new_inline("users");
+    ///
+    /// assert_eq!(NAME.expect("fits inline").as_str(), "users");
+    /// ```
     #[must_use]
     pub const fn new_inline(value: &str) -> Option<Self> {
         if value.len() > INLINE_CAPACITY {
@@ -275,12 +397,21 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
         }
 
         Some(Self {
-            repr: Repr::new_inline(Self::inline_bytes(value, None)),
+            repr: Repr::inline_from(value, None),
             marker: PhantomData,
         })
     }
 
     /// Converts this identifier into the selected owned string type.
+    ///
+    /// ```rust
+    /// use identstr::IdentStr;
+    ///
+    /// let name: IdentStr = IdentStr::new("\"Users\"");
+    /// let owned: Box<str> = name.into_owned();
+    ///
+    /// assert_eq!(&*owned, "Users");
+    /// ```
     #[must_use]
     pub fn into_owned(self) -> S::Owned {
         let this = std::mem::ManuallyDrop::new(self);
@@ -295,6 +426,14 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     ///
     /// Use this when a map should store only normalized lookup text rather
     /// than the original spelling and quote style.
+    ///
+    /// ```rust
+    /// use identstr::IdentStr;
+    ///
+    /// let name: IdentStr = IdentStr::new("\"Users\"");
+    ///
+    /// assert_eq!(name.to_key().as_str(), "users");
+    /// ```
     #[must_use]
     pub fn to_key(&self) -> Key<P>
     where
@@ -321,12 +460,32 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     ///
     /// Use this with `format!`, `write!`, or logging APIs when an owned
     /// [`String`] is not needed.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let name: IdentStr = IdentStr::with_quote("Users", Quote::Double);
+    ///
+    /// assert_eq!(format!("{}", name.display_quoted()), "\"Users\"");
+    /// ```
     #[must_use]
     pub const fn display_quoted(&self) -> Quoted<'_, Q, P, S> {
         Quoted { ident: self }
     }
 
     /// Writes this identifier with its quotes.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let name: IdentStr = IdentStr::with_quote("User\"Table", Quote::Double);
+    /// let mut sql = String::from("SELECT * FROM ");
+    ///
+    /// name.write_quoted(&mut sql)?;
+    ///
+    /// assert_eq!(sql, "SELECT * FROM \"User\"\"Table\"");
+    /// # Ok::<(), std::fmt::Error>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -336,6 +495,18 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
     }
 
     /// Returns this identifier rendered with its quotes.
+    ///
+    /// Doubled closing delimiters are restored, so the output round-trips
+    /// through [`IdentStr::new`].
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// let name: IdentStr = IdentStr::with_quote("User\"Table", Quote::Double);
+    ///
+    /// assert_eq!(name.to_quoted_string(), "\"User\"\"Table\"");
+    /// assert_eq!(name.to_string(), "User\"Table");
+    /// ```
     #[must_use]
     pub fn to_quoted_string(&self) -> String {
         render::to_string(self.as_str(), self.quote())
@@ -401,13 +572,13 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
             return inline;
         }
 
-        Self::from_heap(S::from_box(value.into_boxed_str()), quote)
+        Self::from_heap(S::from_string(value), quote)
     }
 
     #[inline]
     fn from_inline(value: &str, quote_tag: Option<u8>) -> Self {
         Self {
-            repr: Repr::new_inline(Self::inline_bytes(value, quote_tag)),
+            repr: Repr::inline_from(value, quote_tag),
             marker: PhantomData,
         }
     }
@@ -433,8 +604,7 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
 
     #[inline]
     fn inline_tag(quote: Q) -> Option<u8> {
-        let tag = quote.encode();
-        assert!(tag != 0, "quote tag 0 is reserved for unquoted text");
+        let tag = quote.tag().get();
         (tag <= Repr::MAX_INLINE_QUOTE_TAG).then_some(tag)
     }
 
@@ -444,39 +614,12 @@ impl<Q: QuoteTag, P: Policy, S: Storage> IdentStr<Q, P, S> {
             return 0;
         };
 
-        let tag = quote.encode();
-        assert!(tag != 0, "quote tag 0 is reserved for unquoted text");
+        let tag = quote.tag().get();
         assert!(
             tag <= Repr::MAX_HEAP_QUOTE_TAG,
             "quote tag does not fit heap marker space",
         );
         tag
-    }
-
-    const fn inline_bytes(value: &str, quote_tag: Option<u8>) -> [u8; INLINE_CAPACITY] {
-        let src = value.as_bytes();
-        let mut bytes = [0; INLINE_CAPACITY];
-        let mut index = 0;
-        while index < src.len() {
-            bytes[index] = src[index];
-            index += 1;
-        }
-
-        match quote_tag {
-            Some(tag) => {
-                if src.len() < QUOTED_INLINE_CAPACITY {
-                    bytes[QUOTED_INLINE_CAPACITY - 1] =
-                        Repr::short_inline_byte(INLINE_LEN_U8[src.len()]);
-                }
-                bytes[INLINE_CAPACITY - 1] = Repr::quoted_inline_byte(tag);
-            }
-            None if src.len() < INLINE_CAPACITY => {
-                bytes[INLINE_CAPACITY - 1] = Repr::short_inline_byte(INLINE_LEN_U8[src.len()]);
-            }
-            None => {}
-        }
-
-        bytes
     }
 }
 
@@ -485,6 +628,15 @@ impl<P: Policy, S: Storage> IdentStr<Quote, P, S> {
     ///
     /// This is available in const contexts and returns `None` when `value`
     /// is too long to store without allocating.
+    ///
+    /// ```rust
+    /// use identstr::{IdentStr, Quote};
+    ///
+    /// const NAME: Option<IdentStr> = IdentStr::with_quote_inline("Users", Quote::Double);
+    ///
+    /// let name = NAME.expect("fits inline");
+    /// assert_eq!(name.quote(), Some(Quote::Double));
+    /// ```
     #[must_use]
     pub const fn with_quote_inline(value: &str, quote: Quote) -> Option<Self> {
         if value.len() > QUOTED_INLINE_CAPACITY {
@@ -492,25 +644,31 @@ impl<P: Policy, S: Storage> IdentStr<Quote, P, S> {
         }
 
         Some(Self {
-            repr: Repr::new_inline(Self::inline_bytes(value, Some(quote.tag()))),
+            repr: Repr::inline_from(value, Some(quote.tag().get())),
             marker: PhantomData,
         })
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> fmt::Display for Quoted<'_, Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> fmt::Display for Quoted<'_, Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.ident.write_quoted(f)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Default for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle + fmt::Debug, P: Policy, S: Storage> fmt::Debug for Quoted<'_, Q, P, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.ident, f)
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> Default for IdentStr<Q, P, S> {
     fn default() -> Self {
         Self::empty()
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Clone for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> Clone for IdentStr<Q, P, S> {
     #[inline]
     fn clone(&self) -> Self {
         let repr = if self.repr.is_inline() {
@@ -526,7 +684,7 @@ impl<Q: QuoteTag, P: Policy, S: Storage> Clone for IdentStr<Q, P, S> {
     }
 }
 
-impl<Q: QuoteTag + fmt::Debug, P: Policy, S: Storage> fmt::Debug for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle + fmt::Debug, P: Policy, S: Storage> fmt::Debug for IdentStr<Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = f.debug_struct("IdentStr");
         debug.field("value", &self.as_str());
@@ -535,13 +693,13 @@ impl<Q: QuoteTag + fmt::Debug, P: Policy, S: Storage> fmt::Debug for IdentStr<Q,
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> fmt::Display for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> fmt::Display for IdentStr<Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Drop for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> Drop for IdentStr<Q, P, S> {
     fn drop(&mut self) {
         if self.repr.is_inline() {
             return;
@@ -551,7 +709,7 @@ impl<Q: QuoteTag, P: Policy, S: Storage> Drop for IdentStr<Q, P, S> {
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Deref for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> Deref for IdentStr<Q, P, S> {
     type Target = str;
 
     #[inline]
@@ -560,21 +718,21 @@ impl<Q: QuoteTag, P: Policy, S: Storage> Deref for IdentStr<Q, P, S> {
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> AsRef<str> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> AsRef<str> for IdentStr<Q, P, S> {
     #[inline]
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> AsRef<[u8]> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> AsRef<[u8]> for IdentStr<Q, P, S> {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }
 }
 
-impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialEq<IdentStr<Q, P, R>>
+impl<Q: QuoteStyle, P: Policy, L: Storage, R: Storage> PartialEq<IdentStr<Q, P, R>>
     for IdentStr<Q, P, L>
 {
     #[inline]
@@ -583,9 +741,9 @@ impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialEq<IdentStr<Q, P, R>
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Eq for IdentStr<Q, P, S> {}
+impl<Q: QuoteStyle, P: Policy, S: Storage> Eq for IdentStr<Q, P, S> {}
 
-impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialOrd<IdentStr<Q, P, R>>
+impl<Q: QuoteStyle, P: Policy, L: Storage, R: Storage> PartialOrd<IdentStr<Q, P, R>>
     for IdentStr<Q, P, L>
 {
     #[inline]
@@ -594,154 +752,196 @@ impl<Q: QuoteTag, P: Policy, L: Storage, R: Storage> PartialOrd<IdentStr<Q, P, R
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Ord for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> Ord for IdentStr<Q, P, S> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         P::cmp(self.as_str(), other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> Hash for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> Hash for IdentStr<Q, P, S> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         P::hash(self.as_str(), state);
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<str> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<str> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &str) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<&str> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<&str> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &&str) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<String> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<String> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &String) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<&String> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<&String> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &&String) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<'a, Q: QuoteTag, P: Policy, S: Storage> PartialEq<Cow<'a, str>> for IdentStr<Q, P, S> {
+impl<'a, Q: QuoteStyle, P: Policy, S: Storage> PartialEq<Cow<'a, str>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Cow<'a, str>) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<Box<str>> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<Box<str>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Box<str>) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<Arc<str>> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<Arc<str>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Arc<str>) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<Rc<str>> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<Rc<str>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Rc<str>) -> bool {
         P::eq(self.as_str(), other)
     }
 }
 
-impl<Q: QuoteTag, P: KeyPolicy, S: Storage> PartialEq<Key<P>> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: KeyPolicy, S: Storage> PartialEq<Key<P>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Key<P>) -> bool {
         P::eq(self.as_str(), other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for str {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for str {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for &str {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for &str {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for String {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for String {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for &String {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for &String {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Cow<'_, str> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Cow<'_, str> {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Box<str> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Box<str> {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Arc<str> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Arc<str> {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Rc<str> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<IdentStr<Q, P, S>> for Rc<str> {
     #[inline]
     fn eq(&self, other: &IdentStr<Q, P, S>) -> bool {
         P::eq(self, other.as_str())
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> From<&str> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<str> for IdentStr<Q, P, S> {
+    #[inline]
+    fn partial_cmp(&self, other: &str) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<&str> for IdentStr<Q, P, S> {
+    #[inline]
+    fn partial_cmp(&self, other: &&str) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<String> for IdentStr<Q, P, S> {
+    #[inline]
+    fn partial_cmp(&self, other: &String) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<IdentStr<Q, P, S>> for str {
+    #[inline]
+    fn partial_cmp(&self, other: &IdentStr<Q, P, S>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<IdentStr<Q, P, S>> for &str {
+    #[inline]
+    fn partial_cmp(&self, other: &IdentStr<Q, P, S>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> PartialOrd<IdentStr<Q, P, S>> for String {
+    #[inline]
+    fn partial_cmp(&self, other: &IdentStr<Q, P, S>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
+    }
+}
+
+impl<Q: QuoteStyle, P: Policy, S: Storage> From<&str> for IdentStr<Q, P, S> {
     #[inline]
     fn from(value: &str) -> Self {
         Self::from_source_borrowed(value)
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> From<String> for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> From<String> for IdentStr<Q, P, S> {
     #[inline]
     fn from(value: String) -> Self {
         Self::from_source_string(value)
     }
 }
 
-impl<'a, Q: QuoteTag, P: Policy, S: Storage> From<Cow<'a, str>> for IdentStr<Q, P, S> {
+impl<'a, Q: QuoteStyle, P: Policy, S: Storage> From<Cow<'a, str>> for IdentStr<Q, P, S> {
     #[inline]
     fn from(value: Cow<'a, str>) -> Self {
         match value {
@@ -751,50 +951,53 @@ impl<'a, Q: QuoteTag, P: Policy, S: Storage> From<Cow<'a, str>> for IdentStr<Q, 
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<Box<str>> for IdentStr<Q, P, BoxStorage> {
+impl<Q: QuoteStyle, P: Policy> From<Box<str>> for IdentStr<Q, P, BoxStorage> {
+    #[inline]
     fn from(value: Box<str>) -> Self {
         Self::from_source_owned(value)
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<Arc<str>> for IdentStr<Q, P, ArcStorage> {
+impl<Q: QuoteStyle, P: Policy> From<Arc<str>> for IdentStr<Q, P, ArcStorage> {
+    #[inline]
     fn from(value: Arc<str>) -> Self {
         Self::from_source_owned(value)
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<Rc<str>> for IdentStr<Q, P, RcStorage> {
+impl<Q: QuoteStyle, P: Policy> From<Rc<str>> for IdentStr<Q, P, RcStorage> {
+    #[inline]
     fn from(value: Rc<str>) -> Self {
         Self::from_source_owned(value)
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<IdentStr<Q, P, BoxStorage>> for Box<str> {
+impl<Q: QuoteStyle, P: Policy> From<IdentStr<Q, P, BoxStorage>> for Box<str> {
     fn from(value: IdentStr<Q, P, BoxStorage>) -> Self {
         value.into_owned()
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<IdentStr<Q, P, BoxStorage>> for String {
+impl<Q: QuoteStyle, P: Policy> From<IdentStr<Q, P, BoxStorage>> for String {
     fn from(value: IdentStr<Q, P, BoxStorage>) -> Self {
         let value: Box<str> = value.into();
         value.into_string()
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<IdentStr<Q, P, ArcStorage>> for Arc<str> {
+impl<Q: QuoteStyle, P: Policy> From<IdentStr<Q, P, ArcStorage>> for Arc<str> {
     fn from(value: IdentStr<Q, P, ArcStorage>) -> Self {
         value.into_owned()
     }
 }
 
-impl<Q: QuoteTag, P: Policy> From<IdentStr<Q, P, RcStorage>> for Rc<str> {
+impl<Q: QuoteStyle, P: Policy> From<IdentStr<Q, P, RcStorage>> for Rc<str> {
     fn from(value: IdentStr<Q, P, RcStorage>) -> Self {
         value.into_owned()
     }
 }
 
-impl<Q: QuoteTag, P: Policy, S: Storage> FromStr for IdentStr<Q, P, S> {
+impl<Q: QuoteStyle, P: Policy, S: Storage> FromStr for IdentStr<Q, P, S> {
     type Err = Infallible;
 
     #[inline]
@@ -807,11 +1010,17 @@ impl<Q: QuoteTag, P: Policy, S: Storage> FromStr for IdentStr<Q, P, S> {
 mod tests {
     #[cfg(feature = "unicode")]
     use super::security;
-    use super::{ArcStorage, BoxStorage, IdentStr, Key, Quote, QuoteTag, RcStorage, policy};
+    use super::{
+        ArcStorage, BoxStorage, IdentStr, InvalidQuote, Key, KeyStr, Quote, QuoteStyle, RcStorage,
+        policy,
+    };
     use std::{
+        borrow::Borrow,
         cmp::Ordering,
+        collections::HashMap,
         hash::{Hash, Hasher},
         mem::size_of,
+        num::NonZeroU8,
         rc::Rc,
         str::FromStr,
         sync::Arc,
@@ -826,13 +1035,13 @@ mod tests {
         Bracket = 4,
     }
 
-    impl QuoteTag for TestQuote {
-        fn encode(self) -> u8 {
-            self as u8
+    impl QuoteStyle for TestQuote {
+        fn tag(self) -> NonZeroU8 {
+            NonZeroU8::new(self as u8).expect("discriminants are nonzero")
         }
 
-        fn decode(tag: u8) -> Option<Self> {
-            match tag {
+        fn from_tag(tag: NonZeroU8) -> Option<Self> {
+            match tag.get() {
                 1 => Some(Self::Double),
                 2 => Some(Self::Single),
                 3 => Some(Self::Backtick),
@@ -883,13 +1092,13 @@ mod tests {
         Custom = 0x10,
     }
 
-    impl QuoteTag for HeapOnlyQuote {
-        fn encode(self) -> u8 {
-            self as u8
+    impl QuoteStyle for HeapOnlyQuote {
+        fn tag(self) -> NonZeroU8 {
+            NonZeroU8::new(self as u8).expect("discriminant is nonzero")
         }
 
-        fn decode(tag: u8) -> Option<Self> {
-            match tag {
+        fn from_tag(tag: NonZeroU8) -> Option<Self> {
+            match tag.get() {
                 0x10 => Some(Self::Custom),
                 _ => None,
             }
@@ -908,50 +1117,45 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum ZeroQuote {
-        Custom,
-    }
-
-    impl QuoteTag for ZeroQuote {
-        fn encode(self) -> u8 {
-            match self {
-                Self::Custom => 0,
-            }
-        }
-
-        fn decode(_tag: u8) -> Option<Self> {
-            None
-        }
-
-        fn open_byte(self) -> u8 {
-            match self {
-                Self::Custom => b'"',
-            }
-        }
-
-        fn close_byte(self) -> u8 {
-            match self {
-                Self::Custom => b'"',
-            }
-        }
-
-        fn split_source(_value: &str) -> Option<(Self, &str)> {
-            None
-        }
-    }
-
     type TestIdentStr = IdentStr<TestQuote>;
 
-    fn hash_value<T: Hash>(value: &T) -> u64 {
+    struct ChunkSensitiveHasher(u64);
+
+    impl Hasher for ChunkSensitiveHasher {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0 = self.0.wrapping_mul(31).wrapping_add(1);
+            for &byte in bytes {
+                self.0 = self.0.wrapping_mul(131).wrapping_add(u64::from(byte));
+            }
+        }
+    }
+
+    fn hash_value<T: Hash + ?Sized>(value: &T) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         value.hash(&mut hasher);
         hasher.finish()
     }
 
+    fn chunk_sensitive_hash<T: Hash + ?Sized>(value: &T) -> u64 {
+        let mut hasher = ChunkSensitiveHasher(0);
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    static_assertions::assert_impl_all!(IdentStr<Quote, policy::Ascii, BoxStorage>: Send, Sync);
+    static_assertions::assert_impl_all!(IdentStr<Quote, policy::Ascii, ArcStorage>: Send, Sync);
+    static_assertions::assert_not_impl_any!(IdentStr<Quote, policy::Ascii, RcStorage>: Send, Sync);
+    static_assertions::assert_impl_all!(Key<policy::Ascii>: Send, Sync);
+    static_assertions::assert_impl_all!(KeyStr<policy::Ascii>: Send, Sync);
+
     #[test]
     fn storage_uses_two_word_budget() {
         assert_eq!(size_of::<TestIdentStr>(), 2 * size_of::<usize>());
+        assert_eq!(size_of::<Key<policy::Ascii>>(), 2 * size_of::<usize>());
     }
 
     #[test]
@@ -960,7 +1164,10 @@ mod tests {
         assert_eq!(Quote::from_open_byte(b'"'), Some(Quote::Double));
         assert_eq!(Quote::from_tag(Quote::Double.tag()), Some(Quote::Double));
         assert_eq!(Quote::try_from('"'), Ok(Quote::Double));
-        assert_eq!(Quote::try_from(Quote::Double.tag()), Ok(Quote::Double));
+        assert_eq!(
+            Quote::try_from(Quote::Double.tag().get()),
+            Ok(Quote::Double)
+        );
         assert_eq!(Quote::from_open('\''), Some(Quote::Single));
         assert_eq!(Quote::from_open('`'), Some(Quote::Backtick));
         assert_eq!(Quote::from_open('['), Some(Quote::Bracket));
@@ -968,6 +1175,13 @@ mod tests {
         assert_eq!(Quote::Double.open_byte(), b'"');
         assert_eq!(Quote::Bracket.close(), ']');
         assert_eq!(Quote::Bracket.close_byte(), b']');
+    }
+
+    #[test]
+    fn invalid_quote_conversions_report_typed_errors() {
+        assert_eq!(Quote::try_from('x'), Err(InvalidQuote(())));
+        assert_eq!(Quote::try_from(0_u8), Err(InvalidQuote(())));
+        assert_eq!(InvalidQuote(()).to_string(), "invalid quote delimiter");
     }
 
     #[test]
@@ -1099,6 +1313,14 @@ mod tests {
     }
 
     #[test]
+    fn long_owned_string_spills_for_arc_storage() {
+        let raw = "this_identifier_name_is_long_enough_to_spill_out_of_line";
+        let name = IdentStr::<TestQuote, policy::Ascii, ArcStorage>::from(raw.to_owned());
+        let shared: Arc<str> = name.into();
+        assert_eq!(&*shared, raw);
+    }
+
+    #[test]
     fn byte_view_matches_stored_text() {
         let name = TestIdentStr::with_quote("Users", TestQuote::Double);
         assert_eq!(name.as_bytes(), b"Users");
@@ -1161,6 +1383,19 @@ mod tests {
     }
 
     #[test]
+    fn new_keeps_lone_escape_body_as_raw_text() {
+        for source in ["\"\"\"", "'''", "```", "[]]", "\"a\"\""] {
+            let malformed = IdentStr::<Quote>::new(source);
+
+            assert_eq!(malformed.as_str(), source);
+            assert_eq!(malformed.quote(), None);
+        }
+
+        let key = Key::<policy::Ascii>::new("\"\"\"");
+        assert_eq!(key.as_str(), "\"\"\"");
+    }
+
+    #[test]
     fn try_new_with_skips_inner_parser_for_unquoted_text() {
         let ident = IdentStr::<Quote>::try_new_with("Users", |_, _| -> Result<&str, ()> {
             panic!("inner parser should not run for unquoted input")
@@ -1204,8 +1439,8 @@ mod tests {
     }
 
     #[test]
-    fn from_raw_does_not_parse_quote_delimiters() {
-        let name = IdentStr::<Quote>::from_raw("\"Users\"");
+    fn from_unquoted_does_not_parse_quote_delimiters() {
+        let name = IdentStr::<Quote>::from_unquoted("\"Users\"");
 
         assert_eq!(name.as_str(), "\"Users\"");
         assert_eq!(name.quote(), None);
@@ -1218,7 +1453,7 @@ mod tests {
 
         assert_eq!(name.as_str(), "Users");
         assert_eq!(name.quote(), Some(Quote::Double));
-        assert_eq!(invalid, Err(()));
+        assert_eq!(invalid, Err(InvalidQuote(())));
     }
 
     #[test]
@@ -1273,12 +1508,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "quote tag 0 is reserved for unquoted text")]
-    fn quote_tag_zero_is_reserved() {
-        let _ = IdentStr::<ZeroQuote>::with_quote("short", ZeroQuote::Custom);
-    }
-
-    #[test]
     fn string_traits_follow_ascii_identifier_semantics() {
         let unquoted = TestIdentStr::new("Users");
         let quoted = TestIdentStr::with_quote("users", TestQuote::Double);
@@ -1311,6 +1540,35 @@ mod tests {
     }
 
     #[test]
+    fn ordering_against_string_types_follows_policy() {
+        let ident = TestIdentStr::new("Users");
+
+        let after = String::from("zebra");
+        let before = String::from("apple");
+
+        assert!(ident < "zebra");
+        assert!(ident > "apple");
+        assert!("apple" < ident);
+        assert!(ident <= "USERS");
+        assert!(ident < after);
+        assert!(before < ident);
+    }
+
+    #[test]
+    fn exact_policy_distinguishes_case() {
+        let upper = IdentStr::<TestQuote, policy::Exact>::new("Users");
+        let lower = IdentStr::<TestQuote, policy::Exact>::new("users");
+
+        assert_ne!(upper, lower);
+        assert_eq!(upper, "Users");
+        assert_ne!(hash_value(&upper), hash_value(&lower));
+
+        let key = Key::<policy::Exact>::new("\"Users\"");
+        assert_eq!(key.as_str(), "Users");
+        assert!(key.is_inline());
+    }
+
+    #[test]
     fn ascii_policy_does_not_case_fold_non_ascii_bytes() {
         let upper = TestIdentStr::new("Ä");
         let lower = TestIdentStr::new("ä");
@@ -1323,12 +1581,28 @@ mod tests {
         let lhs = TestIdentStr::new("Users");
         let rhs = TestIdentStr::with_quote("users", TestQuote::Bracket);
 
-        let mut lhs_hasher = std::collections::hash_map::DefaultHasher::new();
-        let mut rhs_hasher = std::collections::hash_map::DefaultHasher::new();
-        lhs.hash(&mut lhs_hasher);
-        rhs.hash(&mut rhs_hasher);
+        assert_eq!(hash_value(&lhs), hash_value(&rhs));
+    }
 
-        assert_eq!(lhs_hasher.finish(), rhs_hasher.finish());
+    #[test]
+    fn hashing_is_stable_across_write_chunking_for_long_text() {
+        let upper = "A".repeat(100);
+        let lower = "a".repeat(100);
+        let mixed = format!("{}{}", "a".repeat(70), "B".repeat(30));
+        let folded_mixed = mixed.to_ascii_lowercase();
+
+        let lhs = TestIdentStr::new(upper.as_str());
+        let rhs = TestIdentStr::new(lower.as_str());
+        assert_eq!(lhs, rhs);
+        assert_eq!(chunk_sensitive_hash(&lhs), chunk_sensitive_hash(&rhs));
+
+        let lhs = TestIdentStr::new(mixed.as_str());
+        let rhs = TestIdentStr::new(folded_mixed.as_str());
+        assert_eq!(lhs, rhs);
+        assert_eq!(chunk_sensitive_hash(&lhs), chunk_sensitive_hash(&rhs));
+
+        let key = Key::<policy::Ascii>::new(mixed.as_str());
+        assert_eq!(chunk_sensitive_hash(&key), chunk_sensitive_hash(&lhs));
     }
 
     #[test]
@@ -1357,9 +1631,29 @@ mod tests {
     }
 
     #[test]
-    fn key_from_raw_does_not_parse_quote_delimiters() {
-        let key = Key::<policy::Ascii>::from_raw("\"Users\"");
+    fn key_from_unquoted_does_not_parse_quote_delimiters() {
+        let key = Key::<policy::Ascii>::from_unquoted("\"Users\"");
         assert_eq!(key.as_str(), "\"users\"");
+    }
+
+    #[test]
+    fn key_short_values_stay_inline() {
+        let short = Key::<policy::Ascii>::new("Users");
+        let long = Key::<policy::Ascii>::new("this_identifier_name_is_long_enough_to_spill");
+
+        assert!(short.is_inline());
+        assert!(!long.is_inline());
+        assert_eq!(short.as_str(), "users");
+        assert_eq!(
+            long.as_str(),
+            "this_identifier_name_is_long_enough_to_spill"
+        );
+    }
+
+    #[test]
+    fn key_parses_custom_quote_styles_from_source() {
+        let key = Key::<policy::Ascii>::from_source::<TestQuote>("[Users]");
+        assert_eq!(key.as_str(), "users");
     }
 
     #[test]
@@ -1388,6 +1682,8 @@ mod tests {
         assert_eq!(key, local);
         assert_eq!(key, cow);
         assert_ne!(key, "\"users\"");
+        assert!(key < "zebra");
+        assert!("apple" < key);
     }
 
     #[test]
@@ -1401,7 +1697,7 @@ mod tests {
 
     #[test]
     fn key_lookup_uses_key_queries() {
-        let mut tables = std::collections::HashMap::new();
+        let mut tables = HashMap::new();
         tables.insert(Key::<policy::Ascii>::new("\"Users\""), 7usize);
 
         assert_eq!(tables.get(&Key::<policy::Ascii>::new("users")), Some(&7));
@@ -1409,6 +1705,31 @@ mod tests {
             tables.get(&Key::<policy::Ascii>::new("\"users\"")),
             Some(&7)
         );
+    }
+
+    #[test]
+    fn key_str_enables_allocation_free_lookups() {
+        let mut tables = HashMap::new();
+        tables.insert(Key::<policy::Ascii>::new("\"Users\""), 7usize);
+
+        assert_eq!(tables.get(KeyStr::new("USERS")), Some(&7));
+        assert_eq!(tables.get(KeyStr::new("users")), Some(&7));
+        assert_eq!(tables.get(KeyStr::new("missing")), None);
+
+        let mut sorted = std::collections::BTreeMap::new();
+        sorted.insert(Key::<policy::Ascii>::new("Users"), 7usize);
+        assert_eq!(sorted.get(KeyStr::new("USERS")), Some(&7));
+    }
+
+    #[test]
+    fn key_str_borrow_agrees_with_key() {
+        let key = Key::<policy::Ascii>::new("Users");
+        let borrowed: &KeyStr = key.borrow();
+
+        assert_eq!(hash_value(&key), hash_value(borrowed));
+        assert_eq!(key, *KeyStr::new("USERS"));
+        assert_eq!(*KeyStr::new("USERS"), key);
+        assert_eq!(KeyStr::<policy::Ascii>::new("USERS").to_owned(), key);
     }
 
     #[test]
@@ -1429,8 +1750,8 @@ mod tests {
     }
 
     #[test]
-    fn lowercase_ascii_key_reuses_owned_box() {
-        let value = Box::<str>::from("users");
+    fn long_lowercase_ascii_key_reuses_owned_box() {
+        let value = Box::<str>::from("this_identifier_name_is_long_enough_to_spill");
         let ptr = value.as_ptr();
         let key = Key::<policy::Ascii>::from(value);
         let value: Box<str> = key.into();
@@ -1439,7 +1760,7 @@ mod tests {
 
     #[test]
     fn key_from_ident_keeps_raw_identifier_text() {
-        let ident = IdentStr::<Quote>::from_raw("\"Users\"");
+        let ident = IdentStr::<Quote>::from_unquoted("\"Users\"");
         let key = Key::<policy::Ascii>::from(&ident);
 
         assert_eq!(key.as_str(), "\"users\"");
@@ -1467,6 +1788,35 @@ mod tests {
         let ident = IdentStr::<TestQuote, policy::Ascii, BoxStorage>::from(value);
         let value: Box<str> = ident.into();
         assert_eq!(ptr, value.as_ptr());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trips_ident_source_form() {
+        let quoted = IdentStr::<Quote>::new("\"User\"\"Table\"");
+        let json = serde_json::to_string(&quoted).expect("serialize");
+        let back: IdentStr<Quote> = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(back, quoted);
+        assert_eq!(back.as_str(), "User\"Table");
+        assert_eq!(back.quote(), Some(Quote::Double));
+
+        let unquoted = IdentStr::<Quote>::new("Users");
+        let json = serde_json::to_string(&unquoted).expect("serialize");
+        assert_eq!(json, "\"Users\"");
+        let back: IdentStr<Quote> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.quote(), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trips_key_lookup_text() {
+        let key = Key::<policy::Ascii>::from_unquoted("\"Users\"");
+        let json = serde_json::to_string(&key).expect("serialize");
+        let back: Key<policy::Ascii> = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(back, key);
+        assert_eq!(back.as_str(), "\"users\"");
     }
 
     #[cfg(feature = "unicode")]
@@ -1500,6 +1850,22 @@ mod tests {
 
     #[cfg(feature = "unicode")]
     #[test]
+    fn unicode_key_str_lookup_matches_key() {
+        let key = Key::<policy::UnicodeNfc>::new("É");
+        let borrowed: &KeyStr<policy::UnicodeNfc> = key.borrow();
+
+        assert_eq!(hash_value(&key), hash_value(borrowed));
+
+        let mut map = HashMap::new();
+        map.insert(key, 1usize);
+        assert_eq!(
+            map.get(KeyStr::<policy::UnicodeNfc>::new("e\u{301}")),
+            Some(&1)
+        );
+    }
+
+    #[cfg(feature = "unicode")]
+    #[test]
     fn unicode_nfkc_matches_compatibility_casefolded_text() {
         let lhs = IdentStr::<TestQuote, policy::UnicodeNfkc>::from("ﬀ");
         let rhs = IdentStr::<TestQuote, policy::UnicodeNfkc>::from("FF");
@@ -1513,16 +1879,11 @@ mod tests {
         let lhs = IdentStr::<TestQuote, policy::UnicodeNfkc>::from("ﬀ");
         let rhs = IdentStr::<TestQuote, policy::UnicodeNfkc>::from("FF");
 
-        let mut lhs_hasher = std::collections::hash_map::DefaultHasher::new();
-        let mut rhs_hasher = std::collections::hash_map::DefaultHasher::new();
-        lhs.hash(&mut lhs_hasher);
-        rhs.hash(&mut rhs_hasher);
-
-        assert_eq!(lhs_hasher.finish(), rhs_hasher.finish());
+        assert_eq!(hash_value(&lhs), hash_value(&rhs));
         assert_eq!(lhs.cmp(&rhs), Ordering::Equal);
     }
 
-    #[cfg(feature = "unicode")]
+    #[cfg(feature = "unicode-turkic")]
     #[test]
     fn unicode_turkic_policies_follow_dotted_i_rules() {
         let lhs = IdentStr::<TestQuote, policy::UnicodeTurkicNfc>::from("İ");
@@ -1535,7 +1896,7 @@ mod tests {
         assert_ne!(lhs, upper);
     }
 
-    #[cfg(feature = "unicode")]
+    #[cfg(feature = "unicode-turkic")]
     #[test]
     fn unicode_turkic_policies_match_canonical_equivalents() {
         let canonical = (
@@ -1559,6 +1920,15 @@ mod tests {
             Key::<policy::UnicodeTurkicNfkc>::new("İ"),
             Key::<policy::UnicodeTurkicNfkc>::new("I\u{307}")
         );
+    }
+
+    #[cfg(feature = "unicode-turkic")]
+    #[test]
+    fn unicode_turkic_key_borrow_hash_agrees() {
+        let key = Key::<policy::UnicodeTurkicNfc>::new("İ");
+        let borrowed: &KeyStr<policy::UnicodeTurkicNfc> = key.borrow();
+
+        assert_eq!(hash_value(&key), hash_value(borrowed));
     }
 
     #[cfg(feature = "unicode")]

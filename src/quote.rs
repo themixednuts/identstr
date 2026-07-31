@@ -1,6 +1,16 @@
-use crate::QuoteTag;
+use std::{error::Error, fmt, num::NonZeroU8};
+
+use crate::QuoteStyle;
 
 /// Common identifier quote delimiters.
+///
+/// ```rust
+/// use identstr::Quote;
+///
+/// assert_eq!(Quote::from_open('['), Some(Quote::Bracket));
+/// assert_eq!(Quote::Bracket.open(), '[');
+/// assert_eq!(Quote::Bracket.close(), ']');
+/// ```
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Quote {
@@ -10,17 +20,41 @@ pub enum Quote {
     Bracket = 4,
 }
 
+/// Error returned when a delimiter or tag code is not a recognized
+/// [`Quote`].
+///
+/// ```rust
+/// use identstr::{IdentStr, InvalidQuote, Quote};
+///
+/// let invalid: Result<IdentStr, InvalidQuote> = IdentStr::try_with_quote("Users", '!');
+///
+/// assert!(invalid.is_err());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvalidQuote(pub(crate) ());
+
+impl fmt::Display for InvalidQuote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid quote delimiter")
+    }
+}
+
+impl Error for InvalidQuote {}
+
 impl Quote {
     /// Returns the code used to preserve this quote style.
     #[must_use]
-    pub const fn tag(self) -> u8 {
-        self as u8
+    pub const fn tag(self) -> NonZeroU8 {
+        match NonZeroU8::new(self as u8) {
+            Some(tag) => tag,
+            None => unreachable!(),
+        }
     }
 
     /// Converts a preserved quote code into a [`Quote`] value.
     #[must_use]
-    pub const fn from_tag(tag: u8) -> Option<Self> {
-        match tag {
+    pub const fn from_tag(tag: NonZeroU8) -> Option<Self> {
+        match tag.get() {
             1 => Some(Self::Double),
             2 => Some(Self::Single),
             3 => Some(Self::Backtick),
@@ -95,29 +129,31 @@ impl Quote {
 }
 
 impl TryFrom<u8> for Quote {
-    type Error = ();
+    type Error = InvalidQuote;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Self::from_tag(value).ok_or(())
+        NonZeroU8::new(value)
+            .and_then(Self::from_tag)
+            .ok_or(InvalidQuote(()))
     }
 }
 
 impl TryFrom<char> for Quote {
-    type Error = ();
+    type Error = InvalidQuote;
 
     fn try_from(value: char) -> Result<Self, Self::Error> {
-        Self::from_open(value).ok_or(())
+        Self::from_open(value).ok_or(InvalidQuote(()))
     }
 }
 
-impl QuoteTag for Quote {
+impl QuoteStyle for Quote {
     #[inline]
-    fn encode(self) -> u8 {
+    fn tag(self) -> NonZeroU8 {
         self.tag()
     }
 
     #[inline]
-    fn decode(tag: u8) -> Option<Self> {
+    fn from_tag(tag: NonZeroU8) -> Option<Self> {
         Self::from_tag(tag)
     }
 

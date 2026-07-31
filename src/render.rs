@@ -1,46 +1,30 @@
 use std::fmt;
 
-use crate::QuoteTag;
+use crate::QuoteStyle;
 
 #[inline]
 fn find_byte(value: &str, needle: u8) -> Option<usize> {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] == needle {
-            return Some(index);
-        }
-
-        index += 1;
-    }
-
-    None
+    value.as_bytes().iter().position(|&byte| byte == needle)
 }
 
 #[inline]
-fn find_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> Option<usize> {
-    while index < bytes.len() {
-        if bytes[index] == needle {
-            return Some(index);
-        }
-
-        index += 1;
-    }
-
-    None
+fn find_byte_from(bytes: &[u8], needle: u8, index: usize) -> Option<usize> {
+    bytes[index..]
+        .iter()
+        .position(|&byte| byte == needle)
+        .map(|offset| index + offset)
 }
 
 #[inline]
-fn count_byte_from(bytes: &[u8], needle: u8, mut index: usize) -> usize {
-    let mut count = 0;
-
-    while index < bytes.len() {
-        count += usize::from(bytes[index] == needle);
-        index += 1;
-    }
-
-    count
+#[allow(
+    clippy::naive_bytecount,
+    reason = "escape counts in identifier text are tiny; a SIMD dependency is not warranted"
+)]
+fn count_byte_from(bytes: &[u8], needle: u8, index: usize) -> usize {
+    bytes[index..]
+        .iter()
+        .filter(|&&byte| byte == needle)
+        .count()
 }
 
 #[inline]
@@ -49,7 +33,7 @@ fn delimiter(byte: u8) -> char {
     char::from(byte)
 }
 
-pub(crate) fn write_quoted<Q: QuoteTag>(
+pub(crate) fn write_quoted<Q: QuoteStyle>(
     value: &str,
     quote: Option<Q>,
     output: &mut (impl fmt::Write + ?Sized),
@@ -68,7 +52,7 @@ pub(crate) fn write_quoted<Q: QuoteTag>(
     output.write_char(delimiter(quote.close_byte()))
 }
 
-pub(crate) fn to_string<Q: QuoteTag>(value: &str, quote: Option<Q>) -> String {
+pub(crate) fn to_string<Q: QuoteStyle>(value: &str, quote: Option<Q>) -> String {
     let Some(quote) = quote else {
         return value.to_owned();
     };
@@ -89,14 +73,14 @@ pub(crate) fn to_string<Q: QuoteTag>(value: &str, quote: Option<Q>) -> String {
     rendered
 }
 
-fn push_unescaped<Q: QuoteTag>(value: &str, quote: Q, output: &mut String) {
+fn push_unescaped<Q: QuoteStyle>(value: &str, quote: Q, output: &mut String) {
     output.push(delimiter(quote.open_byte()));
     output.push_str(value);
     output.push(delimiter(quote.close_byte()));
 }
 
 #[cold]
-fn push_escaped<Q: QuoteTag>(value: &str, quote: Q, first_escape: usize, output: &mut String) {
+fn push_escaped<Q: QuoteStyle>(value: &str, quote: Q, first_escape: usize, output: &mut String) {
     let close = delimiter(quote.close_byte());
     let escape = quote.close_byte();
     let bytes = value.as_bytes();
@@ -123,7 +107,7 @@ fn push_escaped<Q: QuoteTag>(value: &str, quote: Q, first_escape: usize, output:
 }
 
 #[cold]
-fn write_escaped<Q: QuoteTag>(
+fn write_escaped<Q: QuoteStyle>(
     value: &str,
     quote: Q,
     first_escape: usize,

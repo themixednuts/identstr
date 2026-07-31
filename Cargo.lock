@@ -314,12 +314,15 @@ dependencies = [
 
 [[package]]
 name = "identstr"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "caseless",
  "compact_str",
  "criterion",
  "icu_casemap",
+ "serde",
+ "serde_json",
+ "static_assertions",
  "uncased",
  "unicode-normalization",
  "unicode-security",

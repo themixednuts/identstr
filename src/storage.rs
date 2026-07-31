@@ -11,6 +11,22 @@ mod sealed {
 /// Choose [`BoxStorage`], [`ArcStorage`], or [`RcStorage`] based on how you
 /// want larger values to be shared. This trait is only implemented by the
 /// built-in storage modes.
+///
+/// ```rust
+/// use std::sync::Arc;
+///
+/// use identstr::{ArcStorage, IdentStr, Quote, policy};
+///
+/// type SharedIdent = IdentStr<Quote, policy::Ascii, ArcStorage>;
+///
+/// let name = SharedIdent::new("a_rather_long_identifier_name");
+/// let alias = name.clone();
+///
+/// let name: Arc<str> = name.into();
+/// let alias: Arc<str> = alias.into();
+///
+/// assert!(Arc::ptr_eq(&name, &alias));
+/// ```
 pub trait Storage: sealed::Sealed + Copy + 'static {
     /// Owned string type used by this storage mode.
     type Owned: AsRef<str> + 'static;
@@ -19,7 +35,7 @@ pub trait Storage: sealed::Sealed + Copy + 'static {
     fn from_borrowed(value: &str) -> Self::Owned;
 
     #[doc(hidden)]
-    fn from_box(value: Box<str>) -> Self::Owned;
+    fn from_string(value: String) -> Self::Owned;
 
     #[doc(hidden)]
     fn into_repr(value: Self::Owned, quote_tag: u8) -> Repr;
@@ -49,8 +65,8 @@ impl Storage for BoxStorage {
     }
 
     #[inline]
-    fn from_box(value: Box<str>) -> Self::Owned {
-        value
+    fn from_string(value: String) -> Self::Owned {
+        value.into_boxed_str()
     }
 
     #[inline]
@@ -89,7 +105,7 @@ impl Storage for ArcStorage {
     }
 
     #[inline]
-    fn from_box(value: Box<str>) -> Self::Owned {
+    fn from_string(value: String) -> Self::Owned {
         Arc::<str>::from(value)
     }
 
@@ -134,7 +150,7 @@ impl Storage for RcStorage {
     }
 
     #[inline]
-    fn from_box(value: Box<str>) -> Self::Owned {
+    fn from_string(value: String) -> Self::Owned {
         Rc::<str>::from(value)
     }
 

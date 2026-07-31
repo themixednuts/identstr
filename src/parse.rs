@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
-use crate::QuoteTag;
+use crate::QuoteStyle;
 
 #[inline]
-pub(crate) fn quoted_source<Q: QuoteTag>(value: &str) -> Option<(Q, Cow<'_, str>)> {
+pub(crate) fn quoted_source<Q: QuoteStyle>(value: &str) -> Option<(Q, Cow<'_, str>)> {
     let (quote, inner) = Q::split_source(value)?;
     Some((quote, quoted_inner(inner, quote.close_byte())?))
 }
@@ -11,58 +11,37 @@ pub(crate) fn quoted_source<Q: QuoteTag>(value: &str) -> Option<(Q, Cow<'_, str>
 #[inline]
 fn quoted_inner(value: &str, escape: u8) -> Option<Cow<'_, str>> {
     let bytes = value.as_bytes();
-    if bytes.len() < 2 {
+    let Some(first_escape) = bytes.iter().position(|&byte| byte == escape) else {
         return Some(Cow::Borrowed(value));
-    }
+    };
 
-    let mut index = 0;
-
-    while index + 1 < bytes.len() {
-        if bytes[index] == escape {
-            if bytes[index + 1] != escape {
-                return None;
-            }
-
-            return Some(Cow::Owned(quoted_inner_slow(value, escape, index)?));
-        }
-
-        index += 1;
-    }
-
-    if bytes[index] == escape {
+    if bytes.get(first_escape + 1) != Some(&escape) {
         return None;
     }
 
-    Some(Cow::Borrowed(value))
+    Some(Cow::Owned(quoted_inner_slow(value, escape, first_escape)?))
 }
 
 #[cold]
 fn quoted_inner_slow(value: &str, escape: u8, first_escape: usize) -> Option<String> {
     let bytes = value.as_bytes();
     let mut unescaped = String::with_capacity(value.len() - 1);
-    unescaped.push_str(&value[..first_escape]);
-    unescaped.push(escape as char);
+    let mut start = 0;
+    let mut index = first_escape;
 
-    let mut index = first_escape + 2;
-    let mut start = index;
-    while index + 1 < bytes.len() {
-        if bytes[index] != escape {
-            index += 1;
-            continue;
-        }
+    loop {
+        unescaped.push_str(&value[start..index]);
+        unescaped.push(char::from(escape));
+        start = index + 2;
 
-        if bytes[index + 1] != escape {
+        let Some(offset) = bytes[start..].iter().position(|&byte| byte == escape) else {
+            break;
+        };
+
+        index = start + offset;
+        if bytes.get(index + 1) != Some(&escape) {
             return None;
         }
-
-        unescaped.push_str(&value[start..index]);
-        unescaped.push(escape as char);
-        index += 2;
-        start = index;
-    }
-
-    if index < bytes.len() && bytes[index] == escape {
-        return None;
     }
 
     unescaped.push_str(&value[start..]);

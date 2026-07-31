@@ -8,6 +8,18 @@ use unicode_security::{
 };
 
 /// Confusable skeleton for identifier text.
+///
+/// Two identifiers with the same skeleton are visually confusable, even
+/// when their code points differ.
+///
+/// ```rust
+/// use identstr::security::Skeleton;
+///
+/// let fullwidth = Skeleton::new("ｓtore");
+/// let plain = Skeleton::new("store");
+///
+/// assert_eq!(fullwidth, plain);
+/// ```
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Skeleton(Box<str>);
 
@@ -103,12 +115,31 @@ pub fn skeleton(value: &str) -> Skeleton {
 }
 
 /// Returns whether two identifiers share the same confusable skeleton.
+///
+/// ```rust
+/// use identstr::security;
+///
+/// // The first two letters are Cyrillic, not Latin.
+/// assert!(security::is_confusable("раypal", "paypal"));
+/// assert!(!security::is_confusable("users", "orders"));
+/// ```
 #[must_use]
 pub fn is_confusable(lhs: &str, rhs: &str) -> bool {
     skeleton(lhs) == skeleton(rhs)
 }
 
 /// Analyzes Unicode security properties for the provided text.
+///
+/// ```rust
+/// use identstr::security;
+///
+/// let safe = security::analyze("users");
+/// let mixed = security::analyze("раypal");
+///
+/// assert!(safe.identifier_allowed);
+/// assert!(safe.single_script);
+/// assert!(!mixed.single_script);
+/// ```
 #[must_use]
 pub fn analyze(value: &str) -> Analysis {
     Analysis {

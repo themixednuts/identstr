@@ -346,9 +346,9 @@ fn bench_borrowed_construction(c: &mut Criterion, short: &str, long: &str) {
             black_box(Key::<policy::Ascii>::new("customer_id"));
         });
     });
-    group.bench_function("from_raw", |b| {
+    group.bench_function("from_unquoted", |b| {
         b.iter(|| {
-            black_box(Key::<policy::Ascii>::from_raw("customer_id"));
+            black_box(Key::<policy::Ascii>::from_unquoted("customer_id"));
         });
     });
     group.bench_function("new_double", |b| {

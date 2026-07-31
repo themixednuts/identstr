@@ -3,8 +3,19 @@
 //! Policies define how [`crate::IdentStr`] compares, orders, and hashes text.
 //! The stored text is unchanged; only trait behavior varies.
 //!
-//! [`Ascii`] is always available. Unicode-aware policies are available with the
-//! `unicode` cargo feature.
+//! [`Ascii`] and [`Exact`] are always available. Unicode-aware policies are
+//! available with the `unicode` cargo feature, and the Turkic variants with
+//! the `unicode-turkic` feature.
+//!
+//! ```rust
+//! use identstr::{IdentStr, Quote, policy};
+//!
+//! type Insensitive = IdentStr<Quote, policy::Ascii>;
+//! type Sensitive = IdentStr<Quote, policy::Exact>;
+//!
+//! assert_eq!(Insensitive::new("Users"), Insensitive::new("USERS"));
+//! assert_ne!(Sensitive::new("Users"), Sensitive::new("USERS"));
+//! ```
 
 use std::{
     cmp::Ordering,
@@ -12,9 +23,19 @@ use std::{
 };
 
 #[cfg(feature = "unicode")]
-pub use crate::unicode::policy::{UnicodeNfc, UnicodeNfkc, UnicodeTurkicNfc, UnicodeTurkicNfkc};
+pub use crate::unicode::policy::{UnicodeNfc, UnicodeNfkc};
+#[cfg(feature = "unicode-turkic")]
+pub use crate::unicode::policy::{UnicodeTurkicNfc, UnicodeTurkicNfkc};
 
 /// Comparison, ordering, and hashing behavior for identifier text.
+///
+/// # Hashing
+///
+/// [`hash`](Policy::hash) must issue an identical sequence of [`Hasher`]
+/// calls for any two policy-equal inputs. Hashers are not required to be
+/// insensitive to how bytes are split across [`Hasher::write`] calls, so
+/// equal values that produce differently chunked writes can hash differently
+/// under hashers such as `FxHasher`.
 pub trait Policy: Copy + 'static {
     /// Returns whether two identifiers are equal under this policy.
     #[must_use]
@@ -42,40 +63,65 @@ pub trait KeyPolicy: Policy {
     }
 
     /// Hashes lookup text that was already produced by this policy.
+    ///
+    /// This must agree with [`Policy::hash`] for text in lookup form.
     fn hash_key<H: Hasher>(value: &str, state: &mut H) {
         Self::hash(value, state);
+    }
+
+    /// Writes the lookup form of `value` into `buf` without allocating.
+    ///
+    /// Returns the written length when the lookup form fits in `buf`. The
+    /// written prefix must be valid UTF-8 and match [`key`](Self::key).
+    /// Returning `None` falls back to the allocating path.
+    #[doc(hidden)]
+    fn write_key_inline(value: &str, buf: &mut [u8]) -> Option<usize> {
+        let _ = (value, buf);
+        None
     }
 }
 
 /// ASCII case-insensitive comparison.
 ///
 /// ASCII letters fold by case, and non-ASCII bytes are compared exactly.
+///
+/// ```rust
+/// use identstr::{Key, policy};
+///
+/// let key = Key::<policy::Ascii>::new("CustomerId");
+///
+/// assert_eq!(key.as_str(), "customerid");
+/// assert_eq!(key, "CUSTOMERID");
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ascii;
+
+/// Byte-exact, case-sensitive comparison.
+///
+/// Use this when identifier lookup should distinguish case, such as quoted
+/// identifiers in `PostgreSQL` semantics.
+///
+/// ```rust
+/// use identstr::{Key, policy};
+///
+/// let key = Key::<policy::Exact>::new("CustomerId");
+///
+/// assert_eq!(key.as_str(), "CustomerId");
+/// assert_ne!(key, "customerid");
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Exact;
 
 const ASCII_HASH_CHUNK_LEN: usize = 64;
 
 #[inline]
-const fn fold_ascii(byte: u8) -> u8 {
+fn fold_ascii(byte: u8) -> u8 {
     byte.to_ascii_lowercase()
 }
 
 #[inline]
 fn has_upper(value: &str) -> bool {
-    has_upper_bytes(value.as_bytes())
-}
-
-#[inline]
-fn has_upper_bytes(bytes: &[u8]) -> bool {
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index].is_ascii_uppercase() {
-            return true;
-        }
-        index += 1;
-    }
-
-    false
+    value.as_bytes().iter().any(u8::is_ascii_uppercase)
 }
 
 #[inline]
@@ -91,71 +137,33 @@ fn ascii_key(value: Box<str>) -> Box<str> {
 
 #[inline]
 fn cmp_ascii(lhs: &str, rhs: &str) -> Ordering {
-    cmp_ascii_bytes(lhs.as_bytes(), rhs.as_bytes())
-}
-
-#[inline]
-fn cmp_ascii_bytes(lhs: &[u8], rhs: &[u8]) -> Ordering {
-    let shared_len = lhs.len().min(rhs.len());
-
-    let mut index = 0;
-    while index < shared_len {
-        let lhs = fold_ascii(lhs[index]);
-        let rhs = fold_ascii(rhs[index]);
-        if lhs != rhs {
-            return lhs.cmp(&rhs);
-        }
-        index += 1;
-    }
-
-    lhs.len().cmp(&rhs.len())
-}
-
-#[inline]
-fn eq_ascii(lhs: &str, rhs: &str) -> bool {
-    lhs.eq_ignore_ascii_case(rhs)
+    lhs.bytes().map(fold_ascii).cmp(rhs.bytes().map(fold_ascii))
 }
 
 #[inline]
 fn hash_ascii<H: Hasher>(value: &str, state: &mut H) {
-    hash_ascii_bytes(value.as_bytes(), state);
-}
-
-#[inline]
-fn hash_ascii_bytes<H: Hasher>(bytes: &[u8], state: &mut H) {
+    let bytes = value.as_bytes();
     bytes.len().hash(state);
 
-    if !has_upper_bytes(bytes) {
-        state.write(bytes);
-        return;
-    }
-
+    // Both branches feed the hasher identically chunked writes so that
+    // policy-equal text hashes the same under chunk-sensitive hashers.
     let mut scratch = [0_u8; ASCII_HASH_CHUNK_LEN];
-    let mut chunks = bytes.chunks_exact(ASCII_HASH_CHUNK_LEN);
-    for chunk in &mut chunks {
-        let mut index = 0;
-        while index < ASCII_HASH_CHUNK_LEN {
-            scratch[index] = fold_ascii(chunk[index]);
-            index += 1;
+    for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
+        if chunk.iter().any(u8::is_ascii_uppercase) {
+            let folded = &mut scratch[..chunk.len()];
+            folded.copy_from_slice(chunk);
+            folded.make_ascii_lowercase();
+            state.write(folded);
+        } else {
+            state.write(chunk);
         }
-        state.write(&scratch);
-    }
-
-    let remainder = chunks.remainder();
-    if !remainder.is_empty() {
-        let mut index = 0;
-        while index < remainder.len() {
-            scratch[index] = fold_ascii(remainder[index]);
-            index += 1;
-        }
-        state.write(&scratch[..remainder.len()]);
     }
 }
 
 impl Policy for Ascii {
     #[inline]
     fn eq(lhs: &str, rhs: &str) -> bool {
-        eq_ascii(lhs, rhs)
+        lhs.eq_ignore_ascii_case(rhs)
     }
 
     #[inline]
@@ -176,9 +184,48 @@ impl KeyPolicy for Ascii {
     }
 
     #[inline]
-    fn hash_key<H: Hasher>(value: &str, state: &mut H) {
+    fn write_key_inline(value: &str, buf: &mut [u8]) -> Option<usize> {
+        let target = buf.get_mut(..value.len())?;
+        target.copy_from_slice(value.as_bytes());
+        target.make_ascii_lowercase();
+        Some(value.len())
+    }
+}
+
+impl Policy for Exact {
+    #[inline]
+    fn eq(lhs: &str, rhs: &str) -> bool {
+        lhs == rhs
+    }
+
+    #[inline]
+    fn cmp(lhs: &str, rhs: &str) -> Ordering {
+        lhs.cmp(rhs)
+    }
+
+    #[inline]
+    fn hash<H: Hasher>(value: &str, state: &mut H) {
         let bytes = value.as_bytes();
         bytes.len().hash(state);
         state.write(bytes);
+    }
+}
+
+impl KeyPolicy for Exact {
+    #[inline]
+    fn into_key(value: Box<str>) -> Box<str> {
+        value
+    }
+
+    #[inline]
+    fn key(value: &str) -> Box<str> {
+        Box::<str>::from(value)
+    }
+
+    #[inline]
+    fn write_key_inline(value: &str, buf: &mut [u8]) -> Option<usize> {
+        let target = buf.get_mut(..value.len())?;
+        target.copy_from_slice(value.as_bytes());
+        Some(value.len())
     }
 }

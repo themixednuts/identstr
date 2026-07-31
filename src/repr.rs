@@ -47,14 +47,24 @@ impl Repr {
     pub(crate) const MAX_INLINE_QUOTE_TAG: u8 = 0x0F;
     pub(crate) const MAX_HEAP_QUOTE_TAG: u8 = HEAP_QUOTE_MASK;
 
-    pub(crate) const fn new_inline(bytes: [u8; INLINE_CAPACITY]) -> Self {
+    /// Builds an inline repr from text short enough to store without
+    /// allocating.
+    ///
+    /// Callers must check the applicable capacity first:
+    /// [`INLINE_CAPACITY`] for unquoted text and [`QUOTED_INLINE_CAPACITY`]
+    /// when `quote_tag` is present. `quote_tag` must be in
+    /// `1..=MAX_INLINE_QUOTE_TAG`.
+    pub(crate) const fn inline_from(value: &str, quote_tag: Option<u8>) -> Self {
         Self {
             storage: Storage {
-                inline: InlineRepr { bytes },
+                inline: InlineRepr {
+                    bytes: Self::inline_bytes(value, quote_tag),
+                },
             },
         }
     }
 
+    #[inline]
     pub(crate) fn new_heap(ptr: NonNull<u8>, len: usize, quote_tag: u8) -> Self {
         assert!(quote_tag <= Self::MAX_HEAP_QUOTE_TAG);
         assert!(
@@ -70,6 +80,7 @@ impl Repr {
         }
     }
 
+    #[inline]
     pub(crate) const fn is_inline(self) -> bool {
         self.last_byte() < HEAP_BASE
     }
@@ -102,6 +113,7 @@ impl Repr {
         unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
     }
 
+    #[inline]
     pub(crate) fn quote_tag(self) -> u8 {
         let last = self.last_byte();
         if last < HEAP_BASE {
@@ -111,10 +123,12 @@ impl Repr {
         }
     }
 
+    #[inline]
     pub(crate) fn heap_tag(self) -> u8 {
         self.last_byte() & HEAP_QUOTE_MASK
     }
 
+    #[inline]
     pub(crate) const fn last_byte(self) -> u8 {
         unsafe { self.storage.inline.bytes[INLINE_META_INDEX] }
     }
@@ -136,19 +150,40 @@ impl Repr {
         slice as *const str
     }
 
-    pub(crate) const fn short_inline_byte(len: u8) -> u8 {
-        SHORT_INLINE_BASE | len
-    }
-
-    pub(crate) const fn quoted_inline_byte(tag: u8) -> u8 {
-        QUOTED_INLINE_BASE | tag
-    }
-
-    pub(crate) const fn inline_tag(byte: u8) -> u8 {
+    const fn inline_tag(byte: u8) -> u8 {
         if byte <= QUOTED_INLINE_BASE || byte >= HEAP_BASE {
             return 0;
         }
         byte - QUOTED_INLINE_BASE
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "lengths are bounded by INLINE_CAPACITY, which is at most 16"
+    )]
+    const fn inline_bytes(value: &str, quote_tag: Option<u8>) -> [u8; INLINE_CAPACITY] {
+        let src = value.as_bytes();
+        let mut bytes = [0; INLINE_CAPACITY];
+        let mut index = 0;
+        while index < src.len() {
+            bytes[index] = src[index];
+            index += 1;
+        }
+
+        match quote_tag {
+            Some(tag) => {
+                if src.len() < QUOTED_INLINE_CAPACITY {
+                    bytes[QUOTED_LEN_INDEX] = SHORT_INLINE_BASE | src.len() as u8;
+                }
+                bytes[INLINE_META_INDEX] = QUOTED_INLINE_BASE | tag;
+            }
+            None if src.len() < INLINE_CAPACITY => {
+                bytes[INLINE_META_INDEX] = SHORT_INLINE_BASE | src.len() as u8;
+            }
+            None => {}
+        }
+
+        bytes
     }
 
     #[inline]
@@ -180,6 +215,7 @@ impl Repr {
         }
     }
 
+    #[inline]
     fn heap_meta_value(self) -> usize {
         unsafe { self.storage.heap.meta }
     }
