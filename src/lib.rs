@@ -650,6 +650,33 @@ impl<P: Policy, S: Storage> IdentStr<Quote, P, S> {
     }
 }
 
+impl<Q: QuoteStyle, P: KeyPolicy, S: Storage> IdentStr<Q, P, S> {
+    /// Borrows the identifier text as lookup-query text.
+    ///
+    /// This is the allocation-free counterpart of [`Key::from`]: the text is
+    /// wrapped as a [`KeyStr`] and policy normalization is applied during
+    /// comparison and hashing, so the identifier can query a [`Key`] map
+    /// without building an owned key.
+    ///
+    /// ```rust
+    /// use std::collections::HashMap;
+    ///
+    /// use identstr::{IdentStr, Key, policy};
+    ///
+    /// let mut tables = HashMap::new();
+    /// tables.insert(Key::<policy::Ascii>::new("\"Users\""), 7);
+    ///
+    /// let query: IdentStr = IdentStr::new("USERS");
+    ///
+    /// assert_eq!(tables.get(query.as_key_str()), Some(&7));
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn as_key_str(&self) -> &KeyStr<P> {
+        KeyStr::new(self.as_str())
+    }
+}
+
 impl<Q: QuoteStyle, P: Policy, S: Storage> fmt::Display for Quoted<'_, Q, P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.ident.write_quoted(f)
@@ -825,6 +852,13 @@ impl<Q: QuoteStyle, P: Policy, S: Storage> PartialEq<Rc<str>> for IdentStr<Q, P,
 impl<Q: QuoteStyle, P: KeyPolicy, S: Storage> PartialEq<Key<P>> for IdentStr<Q, P, S> {
     #[inline]
     fn eq(&self, other: &Key<P>) -> bool {
+        P::eq(self.as_str(), other.as_str())
+    }
+}
+
+impl<Q: QuoteStyle, P: KeyPolicy, S: Storage> PartialEq<KeyStr<P>> for IdentStr<Q, P, S> {
+    #[inline]
+    fn eq(&self, other: &KeyStr<P>) -> bool {
         P::eq(self.as_str(), other.as_str())
     }
 }
@@ -1730,6 +1764,89 @@ mod tests {
         assert_eq!(key, *KeyStr::new("USERS"));
         assert_eq!(*KeyStr::new("USERS"), key);
         assert_eq!(KeyStr::<policy::Ascii>::new("USERS").to_owned(), key);
+    }
+
+    #[test]
+    fn key_str_compares_with_string_types() {
+        let name = KeyStr::<policy::Ascii>::new("Binary");
+        let owned = String::from("bInArY");
+        let boxed = Box::<str>::from("bInArY");
+        let shared = Arc::<str>::from("bInArY");
+        let local = Rc::<str>::from("bInArY");
+        let cow = std::borrow::Cow::Borrowed("bInArY");
+
+        assert_eq!(name, "BINARY");
+        assert_eq!("BINARY", name);
+        assert_eq!(*name, "BINARY");
+        assert_eq!(*name, owned);
+        assert_eq!(owned, *name);
+        assert_eq!(*name, boxed);
+        assert_eq!(boxed, *name);
+        assert_eq!(*name, shared);
+        assert_eq!(shared, *name);
+        assert_eq!(*name, local);
+        assert_eq!(local, *name);
+        assert_eq!(*name, cow);
+        assert_eq!(cow, *name);
+        assert_ne!(*name, "\"binary\"");
+
+        let exact = KeyStr::<policy::Exact>::new("Binary");
+        assert_eq!(*exact, "Binary");
+        assert_ne!(*exact, "BINARY");
+    }
+
+    #[test]
+    fn key_str_orders_against_string_types() {
+        let name = KeyStr::<policy::Ascii>::new("Middle");
+        let low = String::from("apple");
+        let high = String::from("zebra");
+
+        assert!(*name < "ZEBRA");
+        assert!("APPLE" < *name);
+        assert!(*name > low);
+        assert!(high > *name);
+        assert!(*name <= "MIDDLE");
+        assert!("middle" <= *name);
+    }
+
+    #[test]
+    fn key_str_compares_with_ident() {
+        let ident = TestIdentStr::with_quote("Users", TestQuote::Double);
+        let name = KeyStr::<policy::Ascii>::new("USERS");
+
+        assert_eq!(*name, ident);
+        assert_eq!(ident, *name);
+        assert_ne!(*KeyStr::<policy::Ascii>::new("orders"), ident);
+    }
+
+    #[test]
+    fn key_str_views_text_and_bytes() {
+        let name = KeyStr::<policy::Ascii>::new("Binary");
+
+        let text: &str = name.as_ref();
+        let bytes: &[u8] = name.as_ref();
+        assert_eq!(text, "Binary");
+        assert_eq!(bytes, b"Binary");
+
+        assert_eq!(name.len(), 6);
+        assert!(name.starts_with("Bin"));
+
+        assert!(<&KeyStr>::default().is_empty());
+    }
+
+    #[test]
+    fn ident_as_key_str_enables_allocation_free_lookups() {
+        let mut tables = HashMap::new();
+        tables.insert(Key::<policy::Ascii>::new("\"Users\""), 7usize);
+
+        let query = TestIdentStr::new("USERS");
+        assert_eq!(tables.get(query.as_key_str()), Some(&7));
+
+        let quoted = TestIdentStr::with_quote("Users", TestQuote::Double);
+        assert_eq!(tables.get(quoted.as_key_str()), Some(&7));
+
+        let key = Key::<policy::Ascii>::from(&query);
+        assert_eq!(hash_value(query.as_key_str()), hash_value(&key));
     }
 
     #[test]

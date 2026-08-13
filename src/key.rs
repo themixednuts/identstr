@@ -67,6 +67,18 @@ pub struct Key<P: KeyPolicy = policy::Ascii> {
 /// assert_eq!(tables.get(KeyStr::new("USERS")), Some(&7));
 /// ```
 ///
+/// Comparisons against plain string types apply the same policy, so `==`
+/// with a `&str` is policy equality rather than byte equality:
+///
+/// ```rust
+/// use identstr::{KeyStr, policy};
+///
+/// let name = KeyStr::<policy::Ascii>::new("Binary");
+///
+/// assert_eq!(name, "BINARY");
+/// assert_ne!(KeyStr::<policy::Exact>::new("Binary"), "BINARY");
+/// ```
+///
 /// Unlike [`Key::new`], `KeyStr` does not parse quote delimiters. Convert
 /// quoted query text with [`Key::new`] instead.
 #[repr(transparent)]
@@ -251,6 +263,26 @@ impl<P: KeyPolicy> AsRef<str> for KeyStr<P> {
     }
 }
 
+impl<P: KeyPolicy> AsRef<[u8]> for KeyStr<P> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_str().as_bytes()
+    }
+}
+
+impl<P: KeyPolicy> Deref for KeyStr<P> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl<P: KeyPolicy> Default for &KeyStr<P> {
+    fn default() -> Self {
+        KeyStr::new("")
+    }
+}
+
 impl<'a, P: KeyPolicy> From<&'a str> for &'a KeyStr<P> {
     fn from(value: &'a str) -> Self {
         KeyStr::new(value)
@@ -306,6 +338,144 @@ impl<P: KeyPolicy> PartialEq<KeyStr<P>> for Key<P> {
 impl<P: KeyPolicy> PartialEq<Key<P>> for KeyStr<P> {
     fn eq(&self, other: &Key<P>) -> bool {
         P::eq(self.as_str(), other.as_str())
+    }
+}
+
+impl<P: KeyPolicy, Q: QuoteStyle, S: Storage> PartialEq<crate::IdentStr<Q, P, S>> for KeyStr<P> {
+    fn eq(&self, other: &crate::IdentStr<Q, P, S>) -> bool {
+        P::eq(self.as_str(), other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<str> for KeyStr<P> {
+    fn eq(&self, other: &str) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<&str> for KeyStr<P> {
+    fn eq(&self, other: &&str) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<String> for KeyStr<P> {
+    fn eq(&self, other: &String) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<&String> for KeyStr<P> {
+    fn eq(&self, other: &&String) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<'a, P: KeyPolicy> PartialEq<Cow<'a, str>> for KeyStr<P> {
+    fn eq(&self, other: &Cow<'a, str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Box<str>> for KeyStr<P> {
+    fn eq(&self, other: &Box<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Arc<str>> for KeyStr<P> {
+    fn eq(&self, other: &Arc<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<Rc<str>> for KeyStr<P> {
+    fn eq(&self, other: &Rc<str>) -> bool {
+        P::eq(self.as_str(), other)
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for str {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for &str {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for String {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for &String {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for Cow<'_, str> {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for Box<str> {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for Arc<str> {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialEq<KeyStr<P>> for Rc<str> {
+    fn eq(&self, other: &KeyStr<P>) -> bool {
+        P::eq(self, other.as_str())
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<str> for KeyStr<P> {
+    fn partial_cmp(&self, other: &str) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<&str> for KeyStr<P> {
+    fn partial_cmp(&self, other: &&str) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<String> for KeyStr<P> {
+    fn partial_cmp(&self, other: &String) -> Option<Ordering> {
+        Some(P::cmp(self.as_str(), other))
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<KeyStr<P>> for str {
+    fn partial_cmp(&self, other: &KeyStr<P>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<KeyStr<P>> for &str {
+    fn partial_cmp(&self, other: &KeyStr<P>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
+    }
+}
+
+impl<P: KeyPolicy> PartialOrd<KeyStr<P>> for String {
+    fn partial_cmp(&self, other: &KeyStr<P>) -> Option<Ordering> {
+        Some(P::cmp(self, other.as_str()))
     }
 }
 
