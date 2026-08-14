@@ -34,6 +34,13 @@ use crate::{
 /// quote parsing and policy normalization are applied consistently. For
 /// allocation-free lookups of unquoted query text, use [`KeyStr`].
 ///
+/// `Key` deliberately does not implement `Borrow<str>`. That impl would
+/// make maps hash `&str` queries with `str`'s own `Hash` and compare them
+/// as bytes, neither of which matches the policy's hashing or equality, so
+/// lookups would silently miss. [`KeyStr`] is the sound borrowed form:
+/// its `Hash` and `Eq` route through the same policy as `Key`, which is
+/// what the `Borrow<KeyStr<P>>` contract requires.
+///
 /// ```rust
 /// use std::collections::HashMap;
 ///
@@ -315,6 +322,9 @@ impl<P: KeyPolicy> Hash for KeyStr<P> {
     }
 }
 
+// `KeyStr` hashes and compares through the same policy as `Key`, so this
+// upholds the `Borrow` contract that owned and borrowed forms agree. A
+// `Borrow<str>` impl would not: `str` hashes and compares as raw bytes.
 impl<P: KeyPolicy> Borrow<KeyStr<P>> for Key<P> {
     fn borrow(&self) -> &KeyStr<P> {
         KeyStr::new(self.as_str())
