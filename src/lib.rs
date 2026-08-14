@@ -1174,6 +1174,42 @@ mod tests {
         hasher.finish()
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum HasherCall {
+        Write(Vec<u8>),
+        WriteU8(u8),
+        WriteUsize(usize),
+    }
+
+    #[derive(Default)]
+    struct RecordingHasher {
+        calls: Vec<HasherCall>,
+    }
+
+    impl Hasher for RecordingHasher {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.calls.push(HasherCall::Write(bytes.to_vec()));
+        }
+
+        fn write_u8(&mut self, byte: u8) {
+            self.calls.push(HasherCall::WriteU8(byte));
+        }
+
+        fn write_usize(&mut self, value: usize) {
+            self.calls.push(HasherCall::WriteUsize(value));
+        }
+    }
+
+    fn recorded_calls<T: Hash + ?Sized>(value: &T) -> Vec<HasherCall> {
+        let mut hasher = RecordingHasher::default();
+        value.hash(&mut hasher);
+        hasher.calls
+    }
+
     fn chunk_sensitive_hash<T: Hash + ?Sized>(value: &T) -> u64 {
         let mut hasher = ChunkSensitiveHasher(0);
         value.hash(&mut hasher);
@@ -1637,6 +1673,185 @@ mod tests {
 
         let key = Key::<policy::Ascii>::new(mixed.as_str());
         assert_eq!(chunk_sensitive_hash(&key), chunk_sensitive_hash(&lhs));
+    }
+
+    const ASCII_TERMINATOR_CALL: HasherCall = HasherCall::WriteU8(0xff);
+
+    #[test]
+    fn ascii_hash_writes_folded_bytes_then_terminator() {
+        assert_eq!(
+            recorded_calls(KeyStr::<policy::Ascii>::new("")),
+            [HasherCall::Write(Vec::new()), ASCII_TERMINATOR_CALL]
+        );
+
+        for input in ["users", "USERS", "UsErS"] {
+            assert_eq!(
+                recorded_calls(KeyStr::<policy::Ascii>::new(input)),
+                [HasherCall::Write(b"users".to_vec()), ASCII_TERMINATOR_CALL]
+            );
+            assert_eq!(
+                recorded_calls(&Key::<policy::Ascii>::from_unquoted(input)),
+                [HasherCall::Write(b"users".to_vec()), ASCII_TERMINATOR_CALL]
+            );
+            assert_eq!(
+                recorded_calls(&TestIdentStr::from_unquoted(input)),
+                [HasherCall::Write(b"users".to_vec()), ASCII_TERMINATOR_CALL]
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_hash_distinguishes_prefix_pairs() {
+        for (shorter, longer) in [("", "a"), ("a", "ab"), ("ab", "abc")] {
+            assert_ne!(
+                recorded_calls(KeyStr::<policy::Ascii>::new(shorter)),
+                recorded_calls(KeyStr::<policy::Ascii>::new(longer))
+            );
+            assert_ne!(
+                hash_value(KeyStr::<policy::Ascii>::new(shorter)),
+                hash_value(KeyStr::<policy::Ascii>::new(longer))
+            );
+            assert_ne!(
+                hash_value(&Key::<policy::Ascii>::from_unquoted(shorter)),
+                hash_value(&Key::<policy::Ascii>::from_unquoted(longer))
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_hash_folds_letters_but_not_non_ascii() {
+        let upper = KeyStr::<policy::Ascii>::new("Café");
+        let lower = KeyStr::<policy::Ascii>::new("café");
+        assert_eq!(*upper, *lower);
+        assert_eq!(recorded_calls(upper), recorded_calls(lower));
+        assert_eq!(
+            recorded_calls(upper),
+            [
+                HasherCall::Write("café".as_bytes().to_vec()),
+                ASCII_TERMINATOR_CALL
+            ]
+        );
+
+        let non_ascii_upper = KeyStr::<policy::Ascii>::new("CafÉ");
+        assert_ne!(*non_ascii_upper, *lower);
+        assert_ne!(recorded_calls(non_ascii_upper), recorded_calls(lower));
+
+        let key = Key::<policy::Ascii>::from_unquoted("Café");
+        assert_eq!(key.as_str(), "café");
+        assert_eq!(recorded_calls(&key), recorded_calls(lower));
+    }
+
+    // Chunk boundaries at 63/64/65 and 128/129 bytes, plus the 15/16/17-byte
+    // inline representation boundary, must all produce identical call
+    // sequences for policy-equal owned and borrowed values.
+    #[test]
+    fn ascii_hash_call_sequence_agrees_across_lengths_and_forms() {
+        const CHUNK_LEN: usize = 64;
+
+        for len in [0, 1, 15, 16, 17, 63, 64, 65, 128, 129, 200] {
+            let mixed: String = (0..len)
+                .map(|index| if index % 2 == 0 { 'A' } else { 'b' })
+                .collect();
+            let folded = mixed.to_ascii_lowercase();
+
+            let expected: Vec<HasherCall> = folded
+                .as_bytes()
+                .chunks(CHUNK_LEN)
+                .map(|chunk| HasherCall::Write(chunk.to_vec()))
+                .chain(folded.is_empty().then(|| HasherCall::Write(Vec::new())))
+                .chain([ASCII_TERMINATOR_CALL])
+                .collect();
+
+            let key = Key::<policy::Ascii>::from_unquoted(&mixed);
+            assert_eq!(key.is_inline(), len <= TestIdentStr::INLINE_CAPACITY);
+            assert_eq!(key.as_str(), folded);
+
+            assert_eq!(recorded_calls(&key), expected, "Key, len {len}");
+            assert_eq!(
+                recorded_calls(KeyStr::<policy::Ascii>::new(&mixed)),
+                expected,
+                "KeyStr mixed, len {len}"
+            );
+            assert_eq!(
+                recorded_calls(KeyStr::<policy::Ascii>::new(&folded)),
+                expected,
+                "KeyStr folded, len {len}"
+            );
+            assert_eq!(
+                recorded_calls(&TestIdentStr::from_unquoted(&mixed)),
+                expected,
+                "IdentStr, len {len}"
+            );
+            assert_eq!(
+                hash_value(&key),
+                hash_value(KeyStr::<policy::Ascii>::new(&mixed))
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_hash_agrees_for_quoted_and_unquoted_sources() {
+        let plain = Key::<policy::Ascii>::new("Users");
+        let quoted = Key::<policy::Ascii>::new("\"Users\"");
+        assert_eq!(plain, quoted);
+        assert_eq!(recorded_calls(&plain), recorded_calls(&quoted));
+
+        let escaped = Key::<policy::Ascii>::new("\"He\"\"Llo\"");
+        assert_eq!(escaped.as_str(), "he\"llo");
+        assert_eq!(
+            recorded_calls(&escaped),
+            recorded_calls(KeyStr::<policy::Ascii>::new("He\"llo"))
+        );
+    }
+
+    #[test]
+    fn key_str_lookup_agrees_across_chunked_lengths() {
+        const LENS: [usize; 7] = [0, 15, 16, 17, 64, 65, 129];
+
+        let mut tables = HashMap::new();
+        for (index, len) in LENS.into_iter().enumerate() {
+            tables.insert(Key::<policy::Ascii>::from_unquoted(&"A".repeat(len)), index);
+        }
+
+        for (index, len) in LENS.into_iter().enumerate() {
+            let query = "a".repeat(len);
+            assert_eq!(tables.get(KeyStr::new(query.as_str())), Some(&index));
+            let mixed: String = query
+                .chars()
+                .enumerate()
+                .map(|(position, char)| {
+                    if position % 2 == 0 {
+                        char.to_ascii_uppercase()
+                    } else {
+                        char
+                    }
+                })
+                .collect();
+            assert_eq!(tables.get(KeyStr::new(mixed.as_str())), Some(&index));
+        }
+    }
+
+    #[test]
+    fn exact_hash_keeps_length_prefix_framing() {
+        let expected = [
+            HasherCall::WriteUsize(5),
+            HasherCall::Write(b"Users".to_vec()),
+        ];
+
+        assert_eq!(
+            recorded_calls(KeyStr::<policy::Exact>::new("Users")),
+            expected
+        );
+        assert_eq!(
+            recorded_calls(&Key::<policy::Exact>::from_unquoted("Users")),
+            expected
+        );
+        assert_eq!(
+            recorded_calls(&IdentStr::<TestQuote, policy::Exact>::from_unquoted(
+                "Users"
+            )),
+            expected
+        );
     }
 
     #[test]

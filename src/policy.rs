@@ -114,6 +114,13 @@ pub struct Exact;
 
 const ASCII_HASH_CHUNK_LEN: usize = 64;
 
+// Identifier text is valid UTF-8, which never contains the byte `0xff`, so
+// a trailing `0xff` frames the byte stream unambiguously without hashing a
+// length prefix: no folded stream is a prefix of another. This is the same
+// framing the default `Hasher::write_str` produces, but delegating short
+// values to `str::hash` measured slower here, so both paths write directly.
+const ASCII_HASH_TERMINATOR: u8 = 0xff;
+
 #[inline]
 fn fold_ascii(byte: u8) -> u8 {
     byte.to_ascii_lowercase()
@@ -140,22 +147,22 @@ fn cmp_ascii(lhs: &str, rhs: &str) -> Ordering {
     lhs.bytes().map(fold_ascii).cmp(rhs.bytes().map(fold_ascii))
 }
 
-// Every branch below feeds the hasher a length prefix followed by
-// `ASCII_HASH_CHUNK_LEN`-sized writes, so policy-equal text hashes the same
-// under chunk-sensitive hashers regardless of case content.
+// Every branch below feeds the hasher `ASCII_HASH_CHUNK_LEN`-sized writes
+// followed by a terminator byte, so policy-equal text hashes the same under
+// chunk-sensitive hashers regardless of case content.
 #[inline]
 fn hash_ascii<H: Hasher>(value: &str, state: &mut H) {
     let bytes = value.as_bytes();
-    bytes.len().hash(state);
 
     if bytes.len() <= ASCII_HASH_CHUNK_LEN {
         hash_ascii_chunk(bytes, state);
-        return;
+    } else {
+        for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
+            hash_ascii_chunk(chunk, state);
+        }
     }
 
-    for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
-        hash_ascii_chunk(chunk, state);
-    }
+    state.write_u8(ASCII_HASH_TERMINATOR);
 }
 
 #[inline]
@@ -176,16 +183,16 @@ fn hash_ascii_chunk<H: Hasher>(chunk: &[u8], state: &mut H) {
 #[inline]
 fn hash_ascii_key<H: Hasher>(value: &str, state: &mut H) {
     let bytes = value.as_bytes();
-    bytes.len().hash(state);
 
     if bytes.len() <= ASCII_HASH_CHUNK_LEN {
         state.write(bytes);
-        return;
+    } else {
+        for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
+            state.write(chunk);
+        }
     }
 
-    for chunk in bytes.chunks(ASCII_HASH_CHUNK_LEN) {
-        state.write(chunk);
-    }
+    state.write_u8(ASCII_HASH_TERMINATOR);
 }
 
 impl Policy for Ascii {
