@@ -16,7 +16,7 @@ use std::{
 
 use compact_str::CompactString;
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
-use identstr::{ArcStorage, BoxStorage, IdentStr, Key, Quote, RcStorage, policy};
+use identstr::{ArcStorage, BoxStorage, IdentStr, Key, KeyStr, Quote, RcStorage, policy};
 use uncased::Uncased;
 
 type AsciiIdent = IdentStr<Quote, policy::Ascii, BoxStorage>;
@@ -414,7 +414,8 @@ criterion_group!(
     read::bench_render_quoted,
     compare::bench_compare,
     backend::bench_mixed_backend_eq,
-    compare::bench_hash
+    compare::bench_hash,
+    compare::bench_key_hash
 );
 #[cfg(feature = "unicode")]
 criterion_group!(unicode_benches, unicode::bench_unicode);

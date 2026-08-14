@@ -390,3 +390,35 @@ pub(super) fn bench_hash(c: &mut Criterion) {
         group.finish();
     }
 }
+
+pub(super) fn bench_key_hash(c: &mut Criterion) {
+    let multi_chunk_lower = "ab".repeat(64) + "c";
+    let multi_chunk_mixed = "Ab".repeat(64) + "C";
+
+    let mut group = c.benchmark_group("key_hash");
+    for (label, value) in [
+        ("short_lower", "users"),
+        ("short_mixed", "Users"),
+        ("inline_boundary_lower", "sixteen_bytes_ab"),
+        ("inline_boundary_mixed", "Sixteen_Bytes_Ab"),
+        ("multi_chunk_lower", multi_chunk_lower.as_str()),
+        ("multi_chunk_mixed", multi_chunk_mixed.as_str()),
+    ] {
+        let key = Key::<policy::Ascii>::from_unquoted(value);
+        group.bench_with_input(BenchmarkId::new("key", label), &key, |b, key| {
+            b.iter(|| {
+                let mut hasher = DefaultHasher::new();
+                black_box(key).hash(&mut hasher);
+                black_box(hasher.finish());
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("keystr", label), &value, |b, value| {
+            b.iter(|| {
+                let mut hasher = DefaultHasher::new();
+                black_box(KeyStr::<policy::Ascii>::new(black_box(value))).hash(&mut hasher);
+                black_box(hasher.finish());
+            });
+        });
+    }
+    group.finish();
+}

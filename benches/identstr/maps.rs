@@ -300,6 +300,30 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             black_box(sum);
         });
     });
+    group.bench_function("keystr_lower", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for name in MAP_NAMES_SHORT_LOWER {
+                sum += key_short_map
+                    .get(KeyStr::new(black_box(*name)))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("keystr_mixed", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for name in MAP_NAMES_SHORT {
+                sum += key_short_map
+                    .get(KeyStr::new(black_box(*name)))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
     group.bench_function("naive_box", |b| {
         b.iter(|| {
             let mut sum = 0usize;
@@ -729,6 +753,30 @@ pub(super) fn bench_maps(c: &mut Criterion) {
             for query in &key_long_queries {
                 sum += key_long_map
                     .get(black_box(query))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("keystr_lower", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for name in MAP_NAMES_LONG_LOWER {
+                sum += key_long_map
+                    .get(KeyStr::new(black_box(*name)))
+                    .copied()
+                    .unwrap_or_default();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("keystr_mixed", |b| {
+        b.iter(|| {
+            let mut sum = 0usize;
+            for name in MAP_NAMES_LONG {
+                sum += key_long_map
+                    .get(KeyStr::new(black_box(*name)))
                     .copied()
                     .unwrap_or_default();
             }
